@@ -1,0 +1,27 @@
+# The dsh-network-settings bundle patch: inserts this plugin into the profile
+# entry list. Declared by `dsh.bundle.patch` in package.json, so `dsh plugin
+# add` reconciles the package into `dsh.profile.bundles` and the profile boot
+# applies this layer automatically — no manual cordis.patch.yml edit needed.
+#
+# The patch applies over the profile entry list (bundle layers compose before
+# the profile's own cordis.patch.yml), so it is a bare `insert`. Rows the
+# profile layer adds afterwards can still target this entry by its stable id.
+# The browser half (./client) loads automatically through the dsh.client
+# metadata and registers the "网络设置" settings.section tab.
+- insert:
+    # Stable id so later layers can patch/disable this row by id.
+    - id: dsh-network-settings
+      name: '@dsh-plugin/dsh-network-settings'
+      config:
+        uaEnabled: true
+        userAgent: 'DeepSeek-Harness/0.1 (+https://github.com/deepseek-ai/dsh)'
+        proxyEnabled: false
+        proxyProtocol: http
+        proxyHost: '127.0.0.1'
+        proxyPort: 7890
+        proxyUsername: ''
+        proxyPassword: ''
+        proxyNoProxy: ['127.0.0.1', 'localhost', '::1']
+        proxyTimeoutMs: 60000
+        retryEnabled: true
+        maxRetries: 2
