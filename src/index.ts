@@ -33,7 +33,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { existsSync } from 'node:fs';
 import z from '@deepseek-ai/schemastery';
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';
+import { installSettingsSection, settingsNamespace, SettingsConflictError } from '@deepseek-ai/dsh-settings';
 import { proxiedFetch } from './proxy-fetch.js';
 import { probeProxy } from './probe.js';
 import { toProxy, loadConfig, configPath } from './legacy-config.js';
@@ -237,17 +237,32 @@ export function apply(ctx: Context, injected: PluginConfig): void {
     g[MARK_KEY] = marker;
   }
 
-  // 同源探测路由：/_dsh/dsh-network-settings/probe（浏览器「测试连接」用）。
-  ctx.inject(['webServer'], (webCtx) => {
+  // 同源路由：/_dsh/dsh-network-settings/probe（浏览器「测试连接」用）与
+  // /_dsh/dsh-network-settings/settings（浏览器读写本命名空间——apiproxy 的
+  // 配置客户端白名单不含插件自注册命名空间，故走 host 侧直通路由）。
+  ctx.inject(['webServer', 'settings'], (webCtx) => {
     webCtx.effect(() => {
       const ws = (webCtx as unknown as { webServer?: WebServerLike }).webServer;
       if (ws === undefined) return () => {};
-      return ws.register({
-        kind: 'exact',
-        path: '/_dsh/dsh-network-settings/probe',
-        handler: (req, res) => probeRoute(req, res, current),
-      });
-    }, 'dsh-network-settings: probe route');
+      const disposers: Array<() => unknown> = [];
+      disposers.push(
+        ws.register({
+          kind: 'exact',
+          path: '/_dsh/dsh-network-settings/probe',
+          handler: (req, res) => probeRoute(req, res, current),
+        }),
+      );
+      disposers.push(
+        ws.register({
+          kind: 'exact',
+          path: '/_dsh/dsh-network-settings/settings',
+          handler: (req, res) => settingsRoute(req, res, () => (webCtx as Context).settings),
+        }),
+      );
+      return () => {
+        for (const dispose of disposers) dispose();
+      };
+    }, 'dsh-network-settings: probe + settings routes');
   });
 
   ctx.effect(
@@ -327,4 +342,126 @@ export function probeRoute(
     return;
   }
   send(405, { ok: false, error: 'method not allowed' });
+}
+
+/** dsh-settings 服务的最小视图（描述 / 读写 / 可写性），供本插件路由使用。 */
+interface SettingsServiceView {
+  describe(options?: { redactSecrets?: boolean }): ReadonlyArray<{
+    ns: unknown;
+    revision?: number;
+    value?: unknown;
+    base?: unknown;
+    user?: unknown;
+    secrets?: unknown;
+  }>;
+  update(ns: unknown, patch: object, expectedRevision?: number): Promise<unknown>;
+  replace(ns: unknown, section: object, expectedRevision?: number): Promise<unknown>;
+  readonly writable: boolean;
+}
+
+/** 浏览器读写本命名空间的同源路由视图（GET 读 / POST 写）。 */
+interface SettingsRouteRequest {
+  method?: string;
+  on(event: 'data' | 'end', cb: (chunk?: string) => void): unknown;
+}
+interface SettingsRouteResponse {
+  writeHead(code: number, headers?: Record<string, string>): unknown;
+  end(body?: string): unknown;
+}
+
+/** 把 settings 服务中的一个命名空间描述符投影为浏览器视图。 */
+function settingsView(settings: SettingsServiceView, ns: string): Record<string, unknown> {
+  const descriptor = settings.describe({ redactSecrets: true }).find((d) => String(d.ns) === ns);
+  return {
+    ok: true,
+    ns,
+    revision: descriptor?.revision ?? 0,
+    value: (descriptor?.value ?? {}) as Record<string, unknown>,
+    ...(descriptor?.base === undefined ? {} : { base: descriptor.base }),
+    ...(descriptor?.user === undefined ? {} : { user: descriptor.user }),
+    writable: settings.writable,
+  };
+}
+
+/**
+ * 同源 settings 读写路由：`GET` 读取命名空间视图，`POST` 执行
+ * `{mode: 'update'|'replace'}` 写入（支持 `expectedRevision` 冲突防护）。
+ *
+ * 为什么需要它：dsh-host-apiproxy 的配置客户端白名单不包含插件自注册的
+ * 命名空间（上游刻意为之，把暴露决策移交给 `settings.register()` 属 deferred
+ * work），浏览器直接走 `api.settings.*` 会被 `settings-not-exposed` 拒绝。
+ * 本路由在 host 侧直接调用 dsh-settings 服务，语义与白名单 API 完全一致：
+ * revision 冲突（SettingsConflictError → 409 settings-conflict）、schema 校验
+ * 失败（→ 400 settings-rejected）、redact 读取。
+ */
+export function settingsRoute(
+  req: SettingsRouteRequest,
+  res: SettingsRouteResponse,
+  getSettings: () => SettingsServiceView | undefined,
+): void {
+  const send = (code: number, obj: unknown): void => {
+    res.writeHead(code, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(obj));
+  };
+  const settings = getSettings();
+  if (settings === undefined) {
+    send(500, { ok: false, code: 'settings-absent', error: 'settings service is absent' });
+    return;
+  }
+  if (req.method === 'GET') {
+    send(200, settingsView(settings, NS));
+    return;
+  }
+  if (req.method !== 'POST') {
+    send(405, { ok: false, code: 'method-not-allowed', error: 'method not allowed' });
+    return;
+  }
+  let body = '';
+  req.on('data', (chunk) => {
+    body += chunk ?? '';
+  });
+  req.on('end', () => {
+    let payload: Record<string, unknown> | null = null;
+    try {
+      payload = JSON.parse(body || '{}') as Record<string, unknown>;
+    } catch {
+      send(400, { ok: false, code: 'invalid-json', error: 'invalid json' });
+      return;
+    }
+    const mode = payload.mode === 'replace' ? 'replace' : 'update';
+    const expected = payload.expectedRevision;
+    const expectedRevision = typeof expected === 'number' && expected > 0 ? expected : undefined;
+    let operation: Promise<unknown>;
+    if (mode === 'replace') {
+      const section = payload.section;
+      operation = typeof section === 'object' && section !== null
+        ? settings.replace(NS, section as Record<string, unknown>, expectedRevision)
+        : Promise.reject(new Error('section 必须是 JSON 对象'));
+    } else {
+      const patch = payload.patch;
+      operation = typeof patch === 'object' && patch !== null
+        ? settings.update(NS, patch as Record<string, unknown>, expectedRevision)
+        : Promise.reject(new Error('patch 必须是 JSON 对象'));
+    }
+    Promise.resolve(operation).then(
+      () => send(200, settingsView(settings, NS)),
+      (error: unknown) => {
+        if (error instanceof SettingsConflictError) {
+          send(409, {
+            ok: false,
+            code: 'settings-conflict',
+            error: error.message,
+            expected: error.expected,
+            actual: error.actual,
+          });
+          return;
+        }
+        send(400, {
+          ok: false,
+          code: 'settings-rejected',
+          error: String((error as Error | undefined)?.message ?? error),
+        });
+      },
+    );
+  });
 }

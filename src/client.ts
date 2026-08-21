@@ -10,8 +10,10 @@
  *      `/_dsh/dsh-network-settings/probe` 触发 Host 端连通 + 延迟探测
  *   3. 请求重试（retryEnabled / maxRetries）
  *
- * 读写走连接层 ApiProxy（`api.settings.describe` / `update`），与
- * dsh-user-agent / dsh-auxiliary 同一条缝，Host 半边在下一条请求即生效。
+ * 读写走同源路由 `/_dsh/dsh-network-settings/settings`（Host 半边直通
+ * dsh-settings 服务：apiproxy 的配置客户端白名单不含插件自注册命名空间，
+ * 浏览器直连 `api.settings.*` 会被 settings-not-exposed 拒绝），Host 半边在
+ * 下一条请求即生效。
  *
  * 本模块通过 web profile 的 `__ModuleLoader__` 协议注册；`require` 由 loader
  * 提供而非 Node。注册包在 IIFE 内是刻意的：web profile 里每个 bundle 都以
@@ -58,6 +60,8 @@ interface LoaderDeclaration {
       const NS = 'dsh-network-settings';
       /** 同源探测路由（Host 半边注册）。 */
       const PROBE_API = '/_dsh/dsh-network-settings/probe';
+      /** 同源 settings 读写路由（Host 半边注册）。 */
+      const SETTINGS_API = '/_dsh/dsh-network-settings/settings';
 
       /** 协议下拉选项集。 */
       const PROTOCOL_ITEMS = [
@@ -99,82 +103,69 @@ interface LoaderDeclaration {
         maxRetries?: number;
       }
 
-      /** Rpc 信封。 */
-      interface RpcResult<T> {
-        ok: boolean;
-        value?: T;
-        error?: { code?: string; message?: string };
-      }
-      interface RpcResponse<T> {
-        result: RpcResult<T>;
-      }
-      interface NamespaceView {
-        ns: string;
-        revision: number;
+      // ── 同源 settings 路由（读写命名空间，绕过 apiproxy 配置客户端白名单）──
+
+      /** 路由请求的 RPC 信封。 */
+      interface RouteOk {
+        ok: true;
+        revision?: number;
         value?: NamespaceValue;
+        writable?: boolean;
       }
-      interface SettingsDescribeValue {
-        namespaces: NamespaceView[];
-        writable: boolean;
+      interface RouteError {
+        ok: false;
+        code?: string;
+        error?: string;
       }
-      /** 设置页需要的 ApiProxy 面。 */
-      interface SettingsFacade {
-        describe(input: Record<string, never>): Promise<RpcResponse<SettingsDescribeValue>>;
-        update(input: {
-          ns: string;
-          patch: Record<string, unknown>;
-          expectedRevision?: number;
-        }): Promise<RpcResponse<unknown>>;
-      }
-      interface IApiClient {
-        settings: SettingsFacade;
-      }
+      type RouteResponse = RouteOk | RouteError;
 
-      /** 解包 RpcResponse，失败即抛。 */
-      function unwrap<T>(response: RpcResponse<T>): T {
-        if (!response.result.ok) {
-          throw new Error(response.result.error?.message ?? 'settings RPC failed');
-        }
-        return response.result.value as T;
-      }
-
-      /** 读取命名空间：返回解析值 + revision + writable。 */
-      async function loadNamespace(api: IApiClient): Promise<{
+      /** GET 读取命名空间：返回解析值 + revision + writable。 */
+      async function loadNamespace(): Promise<{
         value: NamespaceValue;
         revision: number;
         writable: boolean;
       }> {
-        const describe = await api.settings.describe({});
-        const decoded: SettingsDescribeValue | undefined =
-          describe.result.ok ? describe.result.value : undefined;
-        const ns = (decoded?.namespaces ?? []).find((entry) => entry.ns === NS);
-        const value = ns?.value ?? {};
+        const response = await fetch(SETTINGS_API, { method: 'GET' });
+        const json: RouteResponse = await response.json();
+        if (json.ok !== true) {
+          throw new Error((json as RouteError).error ?? '读取网络设置失败');
+        }
         return {
-          value,
-          revision: ns?.revision ?? 0,
-          writable: decoded?.writable !== false,
+          value: json.value ?? {},
+          revision: json.revision ?? 0,
+          writable: json.writable !== false,
         };
       }
 
       /**
        * 保存一块设置（patch 只含本块字段），成功后刷新 revision。
-       * 失败抛错（conflict 时 message 含 conflict）。
+       * 失败抛错（冲突时 code 为 settings-conflict）。
        */
       async function saveSection(
-        api: IApiClient,
         patch: Record<string, unknown>,
         expectedRevision: number,
         onRevision: (revision: number) => void,
       ): Promise<void> {
-        await unwrap(
-          await api.settings.update({
-            ns: NS,
+        const response = await fetch(SETTINGS_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'update',
             patch,
             expectedRevision: expectedRevision || undefined,
           }),
-        );
-        const after = await loadNamespace(api);
-        onRevision(after.revision);
+        });
+        const json: RouteResponse = await response.json();
+        if (json.ok !== true) {
+          const failure = json as RouteError;
+          if (failure.code === 'settings-conflict') {
+            const error = new Error('conflict') as Error & { code?: string };
+            error.code = 'settings-conflict';
+            throw error;
+          }
+          throw new Error(failure.error ?? '保存网络设置失败');
+        }
+        onRevision(json.revision ?? 0);
       }
 
       // ── 内联样式（本包私有，无全局 CSS）──
@@ -362,7 +353,6 @@ interface LoaderDeclaration {
       // ── 三个卡片组件 ──
 
       interface CardProps {
-        api: IApiClient;
         initial: NamespaceValue;
         revision: number;
         writable: boolean;
@@ -525,7 +515,7 @@ interface LoaderDeclaration {
           setError(null);
           setSaved(false);
           try {
-            await saveSection(props.api, { uaEnabled: enabled, userAgent: userAgent.trim() }, props.revision, props.onRevision);
+            await saveSection({ uaEnabled: enabled, userAgent: userAgent.trim() }, props.revision, props.onRevision);
             setSaved(true);
           } catch (cause) {
             const message = cause instanceof Error ? cause.message : String(cause);
@@ -630,7 +620,6 @@ interface LoaderDeclaration {
           setSaved(false);
           try {
             await saveSection(
-              props.api,
               {
                 proxyEnabled: enabled,
                 proxyProtocol: protocol,
@@ -878,7 +867,7 @@ interface LoaderDeclaration {
           setError(null);
           setSaved(false);
           try {
-            await saveSection(props.api, { retryEnabled: enabled, maxRetries: parsed }, props.revision, props.onRevision);
+            await saveSection({ retryEnabled: enabled, maxRetries: parsed }, props.revision, props.onRevision);
             setSaved(true);
           } catch (cause) {
             const message = cause instanceof Error ? cause.message : String(cause);
@@ -948,8 +937,7 @@ interface LoaderDeclaration {
       }
 
       /** 「网络设置」标签页主体：加载一次命名空间，分发给三块卡片。 */
-      function NetworkSettingsSection(props: { api: IApiClient }): React.ReactElement {
-        const api = props.api;
+      function NetworkSettingsSection(): React.ReactElement {
         const [ready, setReady] = React.useState(false);
         const [writable, setWritable] = React.useState(true);
         const [revision, setRevision] = React.useState(0);
@@ -959,7 +947,7 @@ interface LoaderDeclaration {
           let cancelled = false;
           (async () => {
             try {
-              const loaded = await loadNamespace(api);
+              const loaded = await loadNamespace();
               if (cancelled) return;
               setInitial(loaded.value);
               setRevision(loaded.revision);
@@ -974,7 +962,7 @@ interface LoaderDeclaration {
           return () => {
             cancelled = true;
           };
-        }, [api]);
+        }, []);
 
         if (!ready) {
           return React.createElement('div', { style: hintStyle }, '正在读取网络设置…');
@@ -988,7 +976,6 @@ interface LoaderDeclaration {
           ),
           React.createElement(UaCard, {
             key: 'ua',
-            api,
             initial: initial ?? {},
             revision,
             writable,
@@ -996,7 +983,6 @@ interface LoaderDeclaration {
           }),
           React.createElement(ProxyCard, {
             key: 'proxy',
-            api,
             initial: initial ?? {},
             revision,
             writable,
@@ -1004,7 +990,6 @@ interface LoaderDeclaration {
           }),
           React.createElement(RetryCard, {
             key: 'retry',
-            api,
             initial: initial ?? {},
             revision,
             writable,
@@ -1018,14 +1003,13 @@ interface LoaderDeclaration {
 
       const plugin = {
         name: '@dsh-plugin/dsh-network-settings',
-        inject: ['slots', 'connection'],
+        inject: ['slots'],
         apply(ctx: { get<T = unknown>(service: string): T | undefined }): void {
           const slots = ctx.get<{
             inject(name: string, callback: () => unknown): unknown;
             register(options: unknown, component: unknown): unknown;
           }>('slots');
-          const connection = ctx.get<{ api: IApiClient }>('connection');
-          if (slots === undefined || connection === undefined) {
+          if (slots === undefined) {
             return;
           }
           slots.inject('settings.section', () =>
@@ -1035,7 +1019,7 @@ interface LoaderDeclaration {
                 id: 'dsh-network-settings',
                 order: 30,
                 label: () => '网络设置',
-                inject: () => ({ api: connection.api }),
+                inject: () => ({}),
               },
               NetworkSettingsSection,
             ),
