@@ -35,11 +35,37 @@ interface LoaderDeclaration {
     id: '@dsh-plugin/dsh-network-settings',
     factory: (require) => {
       const React = require('react') as typeof import('react');
+      // 平台 UI 原语（web shell 冻结模块表提供，auxiliary 同款）：Menu 下拉 /
+      // 下拉箭头图标。触发器与弹出层样式因此与其他 DSH picker 保持一致。
+      const primitives = require('@deepseek-ai/dsh-client-ui-primitives') as {
+        Menu: (props: {
+          open: boolean;
+          anchor: React.ReactElement;
+          items: ReadonlyArray<{ id: string; label: string }>;
+          selectedId?: string;
+          onSelect?: (id: string) => void;
+          onClose?: () => void;
+          align?: 'start' | 'center' | 'end';
+          side?: 'top' | 'bottom';
+          dense?: boolean;
+        }) => React.ReactElement;
+        IconChevronDownOutline14: (props: { size?: number }) => React.ReactElement;
+      };
+      const Menu = primitives.Menu;
+      const IconChevronDownOutline14 = primitives.IconChevronDownOutline14;
 
       /** 本插件拥有的 settings 命名空间（与 Host 半边一致）。 */
       const NS = 'dsh-network-settings';
       /** 同源探测路由（Host 半边注册）。 */
       const PROBE_API = '/_dsh/dsh-network-settings/probe';
+
+      /** 协议下拉选项集。 */
+      const PROTOCOL_ITEMS = [
+        { id: 'http', label: 'HTTP (CONNECT 隧道)' },
+        { id: 'socks5', label: 'SOCKS5' },
+      ] as const;
+      /** 下拉菜单高度上限（与 useMenuHeightLimit 同步）。 */
+      const MENU_MAX_HEIGHT = 264;
 
       /** 命名空间默认值（与 Host `Config` 对齐，命名空间为空时展示）。 */
       const DEFAULTS = {
@@ -238,9 +264,32 @@ interface LoaderDeclaration {
         ...inputStyle,
         fontFamily: 'monospace',
       };
-      const selectStyle: React.CSSProperties = {
-        ...inputStyle,
-        height: 36,
+      /** 协议下拉触发器（对齐 dsh-auxiliary 的 ThinkingLevelSelect 触发器）。 */
+      const triggerStyle: React.CSSProperties = {
+        alignItems: 'center',
+        appearance: 'none',
+        background: 'var(--dsw-alias-bg-layer-1, transparent)',
+        border: '1px solid var(--dsw-alias-border-l2, #d9d9d9)',
+        borderRadius: 8,
+        boxSizing: 'border-box',
+        color: 'var(--dsw-alias-label-primary, #1a1a1a)',
+        cursor: 'pointer',
+        display: 'flex',
+        font: 'inherit',
+        fontSize: 14,
+        gap: 8,
+        justifyContent: 'space-between',
+        lineHeight: '20px',
+        minHeight: 36,
+        padding: '7px 10px',
+        textAlign: 'left',
+        width: '100%',
+      };
+      const triggerTextStyle: React.CSSProperties = {
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
       };
       const switchStyle: React.CSSProperties = {
         display: 'flex',
@@ -318,6 +367,94 @@ interface LoaderDeclaration {
         revision: number;
         writable: boolean;
         onRevision: (revision: number) => void;
+      }
+
+      /** 代理协议下拉：平台 Menu 原语（对齐 dsh-auxiliary 的 ThinkingLevelSelect）。 */
+      function ProtocolSelect(props: {
+        value: 'http' | 'socks5';
+        disabled: boolean;
+        onChange: (value: 'http' | 'socks5') => void;
+      }): React.ReactElement {
+        const [open, setOpen] = React.useState(false);
+        const [side, setSide] = React.useState<'bottom' | 'top'>('bottom');
+        const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+        const menuRoot = React.useCallback(() => triggerRef.current?.parentElement ?? null, [triggerRef]);
+        const displayValue = props.value === 'socks5' ? 'SOCKS5' : 'HTTP (CONNECT 隧道)';
+        const updateSide = React.useCallback((): void => {
+          const trigger = triggerRef.current;
+          if (trigger === null) return;
+          const rect = trigger.getBoundingClientRect();
+          const below = window.innerHeight - rect.bottom - 12;
+          const above = rect.top - 12;
+          setSide(below >= Math.min(MENU_MAX_HEIGHT, above) ? 'bottom' : 'top');
+        }, []);
+        React.useEffect(() => {
+          if (!open) return;
+          updateSide();
+          window.addEventListener('scroll', updateSide, true);
+          window.addEventListener('resize', updateSide);
+          return () => {
+            window.removeEventListener('scroll', updateSide, true);
+            window.removeEventListener('resize', updateSide);
+          };
+        }, [open, updateSide]);
+        // 菜单高度封顶：Menu 原语默认按整视口滚动，小型选项列表改为紧凑内滚
+        React.useEffect(() => {
+          if (!open) return;
+          const frame = window.requestAnimationFrame(() => {
+            const menu = menuRoot()?.querySelector<HTMLElement>('[role="menu"]');
+            if (menu === undefined || menu === null) return;
+            menu.style.maxHeight = `${MENU_MAX_HEIGHT}px`;
+            menu.style.overflowY = 'auto';
+          });
+          return () => window.cancelAnimationFrame(frame);
+        }, [open, menuRoot]);
+        return React.createElement(
+          Menu,
+          {
+            open,
+            anchor: React.createElement(
+              'button',
+              {
+                ref: triggerRef,
+                type: 'button',
+                disabled: props.disabled,
+                'aria-haspopup': 'menu',
+                'aria-expanded': open,
+                style: { ...triggerStyle, opacity: props.disabled ? 0.45 : 1 },
+                onClick: () => setOpen((previous) => !previous),
+              },
+              [
+                React.createElement('span', { key: 'text', style: triggerTextStyle }, displayValue),
+                React.createElement(
+                  'span',
+                  {
+                    key: 'chevron',
+                    style: {
+                      alignItems: 'center',
+                      color: 'var(--dsw-alias-label-tertiary, #6f6f6f)',
+                      display: 'inline-flex',
+                      flexShrink: 0,
+                    },
+                  },
+                  React.createElement(IconChevronDownOutline14, { size: 14 }),
+                ),
+              ],
+            ),
+            items: PROTOCOL_ITEMS,
+            selectedId: props.value,
+            onSelect: (id: string) => {
+              if (id === 'http' || id === 'socks5') {
+                props.onChange(id);
+              }
+              setOpen(false);
+            },
+            onClose: () => setOpen(false),
+            align: 'start',
+            side,
+            dense: true,
+          },
+        );
       }
 
       /** 卡片通用：保存按钮 + 状态行。 */
@@ -574,25 +711,16 @@ interface LoaderDeclaration {
             { key: 'form', style: fieldGridStyle },
             [
               React.createElement('div', { key: 'protocol', style: fieldStyle }, [
-                React.createElement('label', { key: 'l', htmlFor: 'dns-proxy-protocol', style: labelStyle }, '协议'),
-                React.createElement(
-                  'select',
-                  {
-                    key: 'i',
-                    id: 'dns-proxy-protocol',
-                    value: protocol,
-                    onChange: (event: React.ChangeEvent<HTMLSelectElement>) => {
-                      setProtocol(event.target.value);
-                      setSaved(false);
-                    },
-                    disabled: !props.writable || !enabled,
-                    style: selectStyle,
+                React.createElement('label', { key: 'l', style: labelStyle }, '协议'),
+                React.createElement(ProtocolSelect, {
+                  key: 'i',
+                  value: protocol === 'socks5' ? 'socks5' : 'http',
+                  disabled: !props.writable || !enabled,
+                  onChange: (value: 'http' | 'socks5') => {
+                    setProtocol(value);
+                    setSaved(false);
                   },
-                  [
-                    React.createElement('option', { key: 'http', value: 'http' }, 'HTTP (CONNECT 隧道)'),
-                    React.createElement('option', { key: 'socks5', value: 'socks5' }, 'SOCKS5'),
-                  ],
-                ),
+                }),
               ]),
               React.createElement('div', { key: 'host', style: fieldStyle }, [
                 React.createElement('label', { key: 'l', htmlFor: 'dns-proxy-host', style: labelStyle }, '代理地址'),
