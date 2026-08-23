@@ -32,8 +32,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { existsSync } from 'node:fs';
-import z from '@deepseek-ai/schemastery';
-import { installSettingsSection, settingsNamespace, SettingsConflictError } from '@deepseek-ai/dsh-settings';
+import z from 'schemastery';
 import { proxiedFetch } from './proxy-fetch.js';
 import { probeProxy } from './probe.js';
 import { toProxy, loadConfig, configPath } from './legacy-config.js';
@@ -61,7 +60,14 @@ export const name = '@dsh-plugin/dsh-network-settings';
 /** 稳定命名空间 id（仅允许 [a-z0-9-]，保持稳定以保留已保存的用户设置）。 */
 export const PLUGIN_ID = 'dsh-network-settings';
 
-const NS = settingsNamespace(PLUGIN_ID);
+/**
+ * 本插件拥有的 settings 命名空间句柄。
+ *
+ * 迁移到 dsh-loader 之后不再直接 import `settingsNamespace`，而是在 `apply` 里
+ * 经 `loader.settings.namespace()` 取得；在此之前（以及 dsh-settings 缺席时）退化
+ * 为裸 id 字符串——`settingsRoute` 只把它原样交回 settings 服务，两种形态等价。
+ */
+let NS: unknown = PLUGIN_ID;
 
 /** 代理协议支持列表（与 dsh-net-proxy 保持一致）。 */
 export const PROXY_PROTOCOLS = ['http', 'socks5'] as const;
@@ -106,20 +112,38 @@ export const Config = z.object({
 /** 推断出的插件配置类型。 */
 export type PluginConfig = typeof Config extends z<infer T> ? T : never;
 
-/** webServer 服务最小视图（dsh-host-webserver 无 TS 声明，本地建模）。 */
-interface WebServerLike {
-  register(route: {
-    kind: 'exact' | 'prefix';
-    path: string;
-    handler: (req: {
-      method?: string;
-      on(event: 'data' | 'end', cb: (chunk?: string) => void): unknown;
-    }, res: {
-      writeHead(code: number, headers?: Record<string, string>): unknown;
-      end(body?: string): unknown;
-    }) => unknown;
-  }): () => void;
-  registerUpgrade?(route: unknown): () => void;
+/**
+ * `ctx.dshLoader` 的最小视图（本插件只用到 patch / web / services 三处）。
+ *
+ * 本地建模而不是从 @dsh-plugin/dsh-loader 导入类型，是为了让宿主半保持
+ * 「运行时零 @deepseek-ai 导入、构建期零硬类型耦合」——loader 的真实类型面
+ * 在 dsh 升级时可能扩展，插件只声明自己依赖的那一小块。
+ */
+interface DshLoaderHostApi {
+  patch: {
+    global<T>(
+      key: string,
+      wrap: (original: T) => T,
+      options?: { id?: string; scope?: object },
+    ): { dispose(): void };
+  };
+  web: {
+    exact(path: string, handler: unknown): () => void;
+  };
+  services: {
+    get(name: string): unknown;
+  };
+  settings: {
+    namespace(id: string): unknown;
+    installSection<T>(
+      ctx: unknown,
+      ns: unknown,
+      schema: unknown,
+      entry: T,
+      hooks: { setSource(current: () => T): void; onChange(): void; validate(value: T): void },
+    ): boolean;
+    isConflictError(error: unknown): boolean;
+  };
 }
 
 /** 把 fetch input 归一化成字符串 URL（供 NO_PROXY 判定等使用）。 */
@@ -160,21 +184,25 @@ export function legacyProxyMerge(entry: PluginConfig): PluginConfig {
   }
 }
 
-/** 全局标记：跨 apply 周期记住真实原始 fetch。 */
-const MARK_KEY = '__dshNetworkSettingsOriginalFetch';
-
-interface MarkerState {
-  original: FetchType;
-  wrapper: FetchType;
-}
+/**
+ * cordis 服务依赖：`dshLoader` 由 @dsh-plugin/dsh-loader 提供。
+ *
+ * 声明它让本插件与 dsh 内部面彻底解耦——settings 服务、webServer 路由形状、
+ * 全局 fetch 的补丁协议全部经 loader 的稳定门面访问，dsh 改内部时只升级 loader。
+ */
+export const inject = ['dshLoader'];
 
 /** 插件入口。 */
 export function apply(ctx: Context, injected: PluginConfig): void {
+  const loader = (ctx as Context & { dshLoader: DshLoaderHostApi }).dshLoader;
   let current: () => PluginConfig = () => injected;
   const base = legacyProxyMerge(injected);
 
+  NS = loader.settings.namespace(PLUGIN_ID);
+
   // 桥接组合入口与用户设置作用域；无 settings 服务时回退到入口。
-  installSettingsSection(ctx, NS, Config, base, {
+  // 经 loader 门面转发到 dsh 的 installSettingsSection（不重实现其回退语义）。
+  loader.settings.installSection<PluginConfig>(ctx, NS, Config, base, {
     setSource: (source) => {
       current = source;
     },
@@ -182,98 +210,97 @@ export function apply(ctx: Context, injected: PluginConfig): void {
     validate: () => {},
   });
 
-  const g = globalThis as typeof globalThis & Record<string, unknown>;
-  const fetchGlobal: FetchType | undefined = typeof fetch === 'function' ? (fetch as FetchType) : undefined;
-  if (fetchGlobal === undefined) {
+  if (typeof fetch !== 'function') {
     ctx.logger.warn('[dsh-network-settings] globalThis.fetch 不可用；网络设置失效');
     return;
   }
 
-  // 只在首次捕获真实 fetch；重复 apply（HMR / 更新）复用标记，卸载总能还原基线。
-  let marker: MarkerState | undefined = g[MARK_KEY] as MarkerState | undefined;
-  const original: FetchType = marker?.original ?? fetchGlobal;
+  /**
+   * 组装「重试 → UA → 代理 → 原始 fetch」四层栈。
+   *
+   * `original` 由 loader 的补丁协议给出：它保证拿到的是安装时刻槽里的真实值，
+   * 因此重复 apply（HMR / 配置更新）不会把上一层 wrapper 当成原值再包一层。
+   */
+  const buildStack = (original: FetchType): FetchType => {
+    // 内层：UA 改写 + 代理（每次调用读取最新策略，改设置下一条请求即生效）。
+    const inner: FetchType = (input, init) => {
+      const cfg = current();
+      let detached = init;
+      if (shouldRewriteUA(cfg)) {
+        detached = applyUserAgent(init, cfg.userAgent.trim());
+      }
+      const proxyEnabled = cfg.proxyEnabled === true;
+      if (proxyEnabled) {
+        const proxy = {
+          ...toProxy({
+            protocol: cfg.proxyProtocol,
+            host: cfg.proxyHost,
+            port: cfg.proxyPort,
+            username: cfg.proxyUsername,
+            password: cfg.proxyPassword,
+            noProxy: cfg.proxyNoProxy,
+          }),
+          timeout: cfg.proxyTimeoutMs,
+        };
+        return proxiedFetch(urlOf(input), detached ?? {}, proxy, original);
+      }
+      return original(input, detached);
+    };
 
-  // 内层：UA 改写 + 代理（每次调用读取最新策略）。
-  const inner: FetchType = (input, init) => {
-    const cfg = current();
-    let detached = init;
-    if (shouldRewriteUA(cfg)) {
-      detached = applyUserAgent(init, cfg.userAgent.trim());
-    }
-    const proxyEnabled = cfg.proxyEnabled === true;
-    if (proxyEnabled) {
-      const proxy = {
-        ...toProxy({
-          protocol: cfg.proxyProtocol,
-          host: cfg.proxyHost,
-          port: cfg.proxyPort,
-          username: cfg.proxyUsername,
-          password: cfg.proxyPassword,
-          noProxy: cfg.proxyNoProxy,
-        }),
-        timeout: cfg.proxyTimeoutMs,
-      };
-      return proxiedFetch(urlOf(input), detached ?? {}, proxy, original);
-    }
-    return original(input, detached);
+    // 外层：请求自动重试（最大重试次数）。
+    return (input, init) => {
+      const cfg = current();
+      const maxRetries = cfg.retryEnabled === true ? Math.max(0, Math.floor(cfg.maxRetries || 0)) : 0;
+      return fetchWithRetry(input, init, inner, {
+        maxRetries,
+        onRetry: (attempt, info) => {
+          const reason = info.status !== undefined ? `HTTP ${info.status}` : String((info.error as Error | undefined)?.message ?? info.error);
+          ctx.logger.info(`[dsh-network-settings] 自动重试 ${attempt}/${maxRetries}（${reason}），${info.delayMs}ms 后重发`);
+        },
+      });
+    };
   };
 
-  // 外层：请求自动重试（最大重试次数）。
-  const wrapper: FetchType = (input, init) => {
-    const cfg = current();
-    const maxRetries = cfg.retryEnabled === true ? Math.max(0, Math.floor(cfg.maxRetries || 0)) : 0;
-    return fetchWithRetry(input, init, inner, {
-      maxRetries,
-      onRetry: (attempt, info) => {
-        const reason = info.status !== undefined ? `HTTP ${info.status}` : String((info.error as Error | undefined)?.message ?? info.error);
-        ctx.logger.info(`[dsh-network-settings] 自动重试 ${attempt}/${maxRetries}（${reason}），${info.delayMs}ms 后重发`);
-      },
+  // 接管全局 fetch。原先此处有约 50 行标记簿记（__dshNetworkSettingsOriginalFetch
+  // 全局键、原值/wrapper 配对、还原前身份比对）；这些语义现在由 loader 的补丁协议
+  // 统一提供，且它的实现有测试锁定，插件只需声明「怎么包」。
+  ctx.effect(() => {
+    const handle = loader.patch.global<FetchType>('fetch', buildStack, {
+      id: 'dsh-network-settings:fetch',
     });
-  };
-
-  g.fetch = wrapper;
-  if (marker === undefined) {
-    marker = { original, wrapper };
-    g[MARK_KEY] = marker;
-  }
+    return () => handle.dispose();
+  }, 'dsh-network-settings: fetch network stack');
 
   // 同源路由：/_dsh/dsh-network-settings/probe（浏览器「测试连接」用）与
   // /_dsh/dsh-network-settings/settings（浏览器读写本命名空间——apiproxy 的
   // 配置客户端白名单不含插件自注册命名空间，故走 host 侧直通路由）。
-  ctx.inject(['webServer', 'settings'], (webCtx) => {
-    webCtx.effect(() => {
-      const ws = (webCtx as unknown as { webServer?: WebServerLike }).webServer;
-      if (ws === undefined) return () => {};
-      const disposers: Array<() => unknown> = [];
-      disposers.push(
-        ws.register({
-          kind: 'exact',
-          path: '/_dsh/dsh-network-settings/probe',
-          handler: (req, res) => probeRoute(req, res, current),
-        }),
-      );
-      disposers.push(
-        ws.register({
-          kind: 'exact',
-          path: '/_dsh/dsh-network-settings/settings',
-          handler: (req, res) => settingsRoute(req, res, () => (webCtx as Context).settings),
-        }),
-      );
+  //
+  // 经 loader 的 web 门面注册 kind: 'exact'（任意方法，由 handler 自行分派）。
+  // headless profile 没有 web 服务，先探测再注册，避免门面抛错中断装配。
+  const hasWebServer =
+    loader.services.get('webServer') !== undefined || loader.services.get('httpServer') !== undefined;
+  if (hasWebServer) {
+    ctx.effect(() => {
+      const disposers = [
+        loader.web.exact('/_dsh/dsh-network-settings/probe', (req: unknown, res: unknown) =>
+          probeRoute(req as never, res as never, current),
+        ),
+        loader.web.exact('/_dsh/dsh-network-settings/settings', (req: unknown, res: unknown) =>
+          settingsRoute(
+            req as never,
+            res as never,
+            () => loader.services.get('settings') as SettingsServiceView | undefined,
+            loader.settings.isConflictError,
+          ),
+        ),
+      ];
       return () => {
         for (const dispose of disposers) dispose();
       };
     }, 'dsh-network-settings: probe + settings routes');
-  });
-
-  ctx.effect(
-    () => () => {
-      if (marker !== undefined && g.fetch === marker.wrapper) {
-        g.fetch = marker.original;
-      }
-      if (g[MARK_KEY] === marker) delete g[MARK_KEY];
-    },
-    'dsh-network-settings: fetch network stack',
-  );
+  } else {
+    ctx.logger.info('[dsh-network-settings] 无 webServer 服务；跳过同源探测/设置路由');
+  }
 
   const cfg = current();
   ctx.logger.info(
@@ -370,11 +397,12 @@ interface SettingsRouteResponse {
 }
 
 /** 把 settings 服务中的一个命名空间描述符投影为浏览器视图。 */
-function settingsView(settings: SettingsServiceView, ns: string): Record<string, unknown> {
-  const descriptor = settings.describe({ redactSecrets: true }).find((d) => String(d.ns) === ns);
+function settingsView(settings: SettingsServiceView, ns: unknown): Record<string, unknown> {
+  const key = String(ns);
+  const descriptor = settings.describe({ redactSecrets: true }).find((d) => String(d.ns) === key);
   return {
     ok: true,
-    ns,
+    ns: key,
     revision: descriptor?.revision ?? 0,
     value: (descriptor?.value ?? {}) as Record<string, unknown>,
     ...(descriptor?.base === undefined ? {} : { base: descriptor.base }),
@@ -391,13 +419,20 @@ function settingsView(settings: SettingsServiceView, ns: string): Record<string,
  * 命名空间（上游刻意为之，把暴露决策移交给 `settings.register()` 属 deferred
  * work），浏览器直接走 `api.settings.*` 会被 `settings-not-exposed` 拒绝。
  * 本路由在 host 侧直接调用 dsh-settings 服务，语义与白名单 API 完全一致：
- * revision 冲突（SettingsConflictError → 409 settings-conflict）、schema 校验
- * 失败（→ 400 settings-rejected）、redact 读取。
+ * revision 冲突（→ 409 settings-conflict）、schema 校验失败（→ 400
+ * settings-rejected）、redact 读取。
+ *
+ * @param isConflict 判定「revision 冲突」的谓词。迁移到 dsh-loader 后不再直接
+ *   `instanceof SettingsConflictError`，而由调用方传入 `loader.settings
+ *   .isConflictError`；缺省退化为结构判定（带 expected/actual 字段），与 loader
+ *   门面自身的兜底一致。
  */
 export function settingsRoute(
   req: SettingsRouteRequest,
   res: SettingsRouteResponse,
   getSettings: () => SettingsServiceView | undefined,
+  isConflict: (error: unknown) => boolean = (error) =>
+    error !== null && typeof error === 'object' && ('expected' in error || 'actual' in error),
 ): void {
   const send = (code: number, obj: unknown): void => {
     res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -446,13 +481,14 @@ export function settingsRoute(
     Promise.resolve(operation).then(
       () => send(200, settingsView(settings, NS)),
       (error: unknown) => {
-        if (error instanceof SettingsConflictError) {
+        if (isConflict(error)) {
+          const conflict = error as { message?: string; expected?: unknown; actual?: unknown };
           send(409, {
             ok: false,
             code: 'settings-conflict',
-            error: error.message,
-            expected: error.expected,
-            actual: error.actual,
+            error: conflict.message,
+            expected: conflict.expected,
+            actual: conflict.actual,
           });
           return;
         }

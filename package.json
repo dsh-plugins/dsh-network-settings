@@ -45,7 +45,8 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-client-runtime",
+        "@dsh-plugin/dsh-loader"
       ]
     }
   },
@@ -62,16 +63,16 @@
     "network"
   ],
   "license": "MIT",
+  "dependencies": {
+    "schemastery": "^3.18.0"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.1",
+    "@dsh-plugin/dsh-loader": "^1.1.0",
     "react": "^18.2.0"
   },
   "devDependencies": {
+    "@dsh-plugin/dsh-loader": "file:../dsh-loader",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.31",
     "typescript": "^5.7.0"
