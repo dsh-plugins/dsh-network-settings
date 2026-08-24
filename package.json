@@ -72,7 +72,7 @@
     "react": "^18.2.0"
   },
   "devDependencies": {
-    "@dsh-plugin/dsh-loader": "file:../dsh-loader",
+    "@dsh-plugin/dsh-loader": "^1.2.0",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.31",
     "typescript": "^5.7.0"
