@@ -52,7 +52,7 @@ interface LoaderDeclaration {
        * 别名，存在竞态。
        */
       const ui = require('@dsh-plugin/dsh-loader/client') as typeof import('@dsh-plugin/dsh-loader/client');
-      const { Button, Card, Checkbox, Col, Field, Row, Select, Spinner, TextInput, Textarea, T } = ui;
+      const { Button, Card, Checkbox, Col, Field, MenuSelect, Row, Spinner, TextInput, Textarea, T } = ui;
 
       /** 本插件拥有的 settings 命名空间（与 Host 半边一致）。 */
       const NS = 'dsh-network-settings';
@@ -227,7 +227,6 @@ interface LoaderDeclaration {
               {
                 key: 'save',
                 variant: 'primary',
-                icon: 'Save',
                 loading: props.busy,
                 disabled: !props.writable,
                 onClick: props.onSave,
@@ -423,13 +422,14 @@ interface LoaderDeclaration {
               React.createElement(
                 Field,
                 { key: 'protocol', label: '协议', htmlFor: 'dns-proxy-protocol' },
-                React.createElement(Select, {
+                React.createElement(MenuSelect, {
                   id: 'dns-proxy-protocol',
+                  label: '协议',
                   options: PROTOCOL_OPTIONS,
                   value: protocol,
                   disabled: locked,
-                  onChange: (event: React.ChangeEvent<HTMLSelectElement>) => {
-                    setProtocol(event.target.value === 'socks5' ? 'socks5' : 'http');
+                  onChange: (value: string) => {
+                    setProtocol(value === 'socks5' ? 'socks5' : 'http');
                     touch();
                   },
                 }),
@@ -531,7 +531,6 @@ interface LoaderDeclaration {
               {
                 key: 'probe',
                 variant: 'ghost',
-                icon: 'Refresh',
                 loading: probe.running,
                 disabled: busy || !props.writable,
                 onClick: () => void testNow(),
