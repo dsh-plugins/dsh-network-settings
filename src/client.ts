@@ -52,7 +52,7 @@ interface LoaderDeclaration {
        * 别名，存在竞态。
        */
       const ui = require('@dsh-plugin/dsh-loader/client') as typeof import('@dsh-plugin/dsh-loader/client');
-      const { Button, Card, Col, Field, Row, Select, Spinner, Switch, TextInput, Textarea, T } = ui;
+      const { Button, Card, Checkbox, Col, Field, Row, Select, Spinner, TextInput, Textarea, T } = ui;
 
       /** 本插件拥有的 settings 命名空间（与 Host 半边一致）。 */
       const NS = 'dsh-network-settings';
@@ -272,7 +272,7 @@ interface LoaderDeclaration {
         };
 
         return React.createElement(Card, { title: 'User-Agent 设置' }, [
-          React.createElement(Switch, {
+          React.createElement(Checkbox, {
             key: 'enabled',
             checked: enabled,
             disabled: !props.writable,
@@ -403,7 +403,7 @@ interface LoaderDeclaration {
         const locked = !props.writable || !enabled;
 
         return React.createElement(Card, { title: '网络代理' }, [
-          React.createElement(Switch, {
+          React.createElement(Checkbox, {
             key: 'enabled',
             checked: enabled,
             disabled: !props.writable,
@@ -586,7 +586,7 @@ interface LoaderDeclaration {
         };
 
         return React.createElement(Card, { title: '请求重试' }, [
-          React.createElement(Switch, {
+          React.createElement(Checkbox, {
             key: 'enabled',
             checked: enabled,
             disabled: !props.writable,
