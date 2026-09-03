@@ -1,7 +1,7 @@
 {
   "name": "@dsh-plugin/dsh-network-settings",
-  "version": "1.1.1",
-  "description": "DSH (DeepSeek Harness) network plugin that bundles User-Agent rewriting, an HTTP/CONNECT/SOCKS5 proxy, and configurable request auto-retry for every outgoing global-fetch request, all configured from a single \u201c\u7f51\u7edc\u8bbe\u7f6e\u201d (Network) settings tab.",
+  "version": "1.1.2",
+  "description": "DSH (DeepSeek Harness) network plugin that bundles User-Agent rewriting, an HTTP/CONNECT/SOCKS5 proxy, and configurable request auto-retry for every outgoing global-fetch request, all configured from a single “网络设置” (Network) settings tab.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
