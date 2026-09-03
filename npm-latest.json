@@ -1,0 +1,10 @@
+{
+  "name": "@dsh-plugin/dsh-network-settings",
+  "latest": "1.1.1",
+  "publishedAt": "2026-08-26T05:35:43.560Z",
+  "dist": {
+    "tarball": "https://registry.npmjs.org/@dsh-plugin/dsh-network-settings/-/dsh-network-settings-1.1.1.tgz",
+    "integrity": "sha512-mmJoEqwGG5tHPA1Xxtm/ecHVKM4W7QOa+hCSTnN+ujL8Gihlc4wfORDhNd01PdPzAiMmlvOZ+Cvf5zB+5NVqTA==",
+    "unpackedSize": 242861
+  }
+}
