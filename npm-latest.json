@@ -1,10 +1,10 @@
 {
   "name": "@dsh-plugin/dsh-network-settings",
-  "latest": "1.1.1",
-  "publishedAt": "2026-08-26T05:35:43.560Z",
+  "latest": "1.1.2",
+  "publishedAt": "2026-09-03T06:37:04.591Z",
   "dist": {
-    "tarball": "https://registry.npmjs.org/@dsh-plugin/dsh-network-settings/-/dsh-network-settings-1.1.1.tgz",
-    "integrity": "sha512-mmJoEqwGG5tHPA1Xxtm/ecHVKM4W7QOa+hCSTnN+ujL8Gihlc4wfORDhNd01PdPzAiMmlvOZ+Cvf5zB+5NVqTA==",
-    "unpackedSize": 242861
+    "tarball": "https://registry.npmjs.org/@dsh-plugin/dsh-network-settings/-/dsh-network-settings-1.1.2.tgz",
+    "integrity": "sha512-pmxCvIaa93kSYj2Ogbmh2OUidL484Udz2GWsQeFvAw/7gadC1VFvTDAhDvWBoslsmMYOeKkg4ExiH0bpAWDFCQ==",
+    "unpackedSize": 266423
   }
 }
