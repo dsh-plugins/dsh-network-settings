@@ -6,8 +6,7 @@
 # The patch applies over the profile entry list (bundle layers compose before
 # the profile's own cordis.patch.yml), so it is a bare `insert`. Rows the
 # profile layer adds afterwards can still target this entry by its stable id.
-# The browser half (./client) loads automatically through the dsh.client
-# metadata and registers the "网络设置" settings.section tab.
+# dsh-loader 2.0 renders the configuration template in the version-specific UI.
 - insert:
     # Stable id so later layers can patch/disable this row by id.
     - id: dsh-network-settings

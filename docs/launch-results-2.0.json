@@ -1,0 +1,189 @@
+{
+  "date": "2026-10-30",
+  "node": "24.18.0",
+  "pnpm": "11.10.0",
+  "pluginVersion": "2.0.0",
+  "loaderVersion": "2.0.0",
+  "mode": "sequential real CLI processes, isolated DSH_HOME/profile per release",
+  "browserVersions": [
+    "0.1.5-alpha.1",
+    "0.2.2-alpha.2"
+  ],
+  "upstreamWorkaround": {
+    "version": "0.1.6-alpha.1",
+    "defaultResolution": "CLI fails before plugins: app-boot is missing watchUserPatches",
+    "override": {
+      "@deepseek-ai/dsh@0.1.6-alpha.1>@deepseek-ai/dsh-app-boot": "0.1.6-alpha.1"
+    }
+  },
+  "results": [
+    {
+      "version": "0.1.5-alpha.1",
+      "ok": true,
+      "durationMs": 9458,
+      "revision": 4,
+      "dependencyLockSha256": "0ec126f7ed40bec553f00d05f9933111c005b97de79de03bfd532c85e26094bd"
+    },
+    {
+      "version": "0.1.5-alpha.2",
+      "ok": true,
+      "durationMs": 9132,
+      "revision": 2,
+      "dependencyLockSha256": "d5d221db7ff10fd57fabf606b83ccb47e6ce7a7b8ac883032dca4c0c7d700203"
+    },
+    {
+      "version": "0.1.5-rc.1",
+      "ok": true,
+      "durationMs": 9120,
+      "revision": 2,
+      "dependencyLockSha256": "ab5af83d899c028954b141d806a59ad46ea78b0255cc0f6a346565db62ddfacc"
+    },
+    {
+      "version": "0.1.5-rc.2",
+      "ok": true,
+      "durationMs": 10062,
+      "revision": 2,
+      "dependencyLockSha256": "0ce97639c377da653d18984228d6c162bc383d6b2cdb4ab3fb72df3f5e4d8f73"
+    },
+    {
+      "version": "0.1.6-alpha.1",
+      "ok": true,
+      "durationMs": 4803,
+      "revision": 2,
+      "dependencyLockSha256": "4294d487c9e6cf6de1ac91649697deafdb70c1897dc84a6a76385d5a64a99b84"
+    },
+    {
+      "version": "0.1.6-alpha.2",
+      "ok": true,
+      "durationMs": 4818,
+      "revision": 2,
+      "dependencyLockSha256": "73d7dda9432934fad53a1b89fd79031cfc4e4149dd2d7deb83c16d0af114daf7"
+    },
+    {
+      "version": "0.1.5-rc.3",
+      "ok": true,
+      "durationMs": 9877,
+      "revision": 2,
+      "dependencyLockSha256": "5c2a53e7172137481da08a0eb2e447c2015a9312d69e051cef1b6c8ffc9f5dbd"
+    },
+    {
+      "version": "0.1.7-alpha.1",
+      "ok": true,
+      "durationMs": 6752,
+      "revision": 2,
+      "dependencyLockSha256": "f178910ce0fd9dbd98d8ab08ea4007a899a979706e69676d817395fe03d2a632"
+    },
+    {
+      "version": "0.1.7-alpha.2",
+      "ok": true,
+      "durationMs": 6375,
+      "revision": 2,
+      "dependencyLockSha256": "9599ab881882e6fa96b023add716801dbc9e327ecc9e99204de58be21932afbe"
+    },
+    {
+      "version": "0.1.7-rc.1",
+      "ok": true,
+      "durationMs": 7112,
+      "revision": 2,
+      "dependencyLockSha256": "fe3aeedb130d1c00b0d9b24096f22e2a582c0313147ce4dc08e99f01c26bbf60"
+    },
+    {
+      "version": "0.1.7-rc.2",
+      "ok": true,
+      "durationMs": 6870,
+      "revision": 2,
+      "dependencyLockSha256": "1cbc0352a2ba4c1aacc178b19f2e3290e4a50cd1ea5ecd52c732f0377dbc688f"
+    },
+    {
+      "version": "0.2.0-rc.1",
+      "ok": true,
+      "durationMs": 7451,
+      "revision": 2,
+      "dependencyLockSha256": "b0ff602dfead73973835aac5dd3f9112591ce35302d627f2a8a072b338000ae4"
+    },
+    {
+      "version": "0.2.0-rc.2",
+      "ok": true,
+      "durationMs": 7776,
+      "revision": 2,
+      "dependencyLockSha256": "d8259007c102bc44a0ec8b779d57a19bb0edd4f4ddac2ae99e272122b02a0c23"
+    },
+    {
+      "version": "0.2.1-alpha.1",
+      "ok": true,
+      "durationMs": 7489,
+      "revision": 2,
+      "dependencyLockSha256": "8bb1f7b7add5cc7e2aeae17485a989e0bd606a547c944cead4a1466656578ecc"
+    },
+    {
+      "version": "0.2.1-alpha.2",
+      "ok": true,
+      "durationMs": 7564,
+      "revision": 2,
+      "dependencyLockSha256": "dcd6ff5bfb3fe6d2bb18d1e548a3a309eed41ef02ad2f6fe0e9ca89f4fa4ab75"
+    },
+    {
+      "version": "0.2.1-alpha.3",
+      "ok": true,
+      "durationMs": 11298,
+      "revision": 2,
+      "dependencyLockSha256": "ef577d33dd17d518c2c987a60bb39609646fde8a4b191c97137cde1af510edba"
+    },
+    {
+      "version": "0.2.1-alpha.4",
+      "ok": true,
+      "durationMs": 10113,
+      "revision": 2,
+      "dependencyLockSha256": "86f82d11a399e8bfeb4a1bb66bc2a12d7f8c47768c7dd0e54557b9f1f4b75500"
+    },
+    {
+      "version": "0.2.1-alpha.5",
+      "ok": true,
+      "durationMs": 9878,
+      "revision": 2,
+      "dependencyLockSha256": "bcb87d0f627bd8010a35b54d8c1b390b46188bfc2ae6a93d085eef8f07a32e0c"
+    },
+    {
+      "version": "0.2.1-rc.1",
+      "ok": true,
+      "durationMs": 9892,
+      "revision": 2,
+      "dependencyLockSha256": "f27c8685d361abe5ad1082afd4906b8ae0f02621b2fe099a78e3b9aaf4bbc828"
+    },
+    {
+      "version": "0.2.1-rc.2",
+      "ok": true,
+      "durationMs": 10098,
+      "revision": 2,
+      "dependencyLockSha256": "d32390b077f69f8911b52bbc8eaea3e1d7b3d64302e9aea5b87d13d7642a23f7"
+    },
+    {
+      "version": "0.2.1-rc.3",
+      "ok": true,
+      "durationMs": 9946,
+      "revision": 2,
+      "dependencyLockSha256": "3c4a76e5c68ab911faae4e72d6518d22a987ebb2fdaa517d853743c25a37f448"
+    },
+    {
+      "version": "0.2.1-rc.4",
+      "ok": true,
+      "durationMs": 10148,
+      "revision": 2,
+      "dependencyLockSha256": "4d4d653070bd61112bbc41760f29572e30f50286214eea0ba53f96b2c4d59bd4"
+    },
+    {
+      "version": "0.2.2-alpha.2",
+      "ok": true,
+      "durationMs": 10673,
+      "revision": 5,
+      "dependencyLockSha256": "5be1cdfeec4ad18f3313597cb0678be795e0c2130ef67787253f6db71c1da3c2"
+    },
+    {
+      "version": "0.2.1-rc.5",
+      "ok": true,
+      "durationMs": 10016,
+      "revision": 2,
+      "dependencyLockSha256": "6bcde7e04f9c826567c9d782ca5502a0c8c6f40087dc7311055e9791b3ef8a39"
+    }
+  ]
+}

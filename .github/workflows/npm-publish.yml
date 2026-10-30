@@ -18,6 +18,9 @@ env:
 
 jobs:
   quality:
+    defaults:
+      run:
+        working-directory: dsh-network-settings
     name: Quality (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -30,12 +33,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          path: dsh-network-settings
+      - name: Checkout loader 2.0 workspace
+        uses: actions/checkout@v6
+        with:
+          repository: dsh-plugins/dsh-loader
+          ref: 009ab1fef86616a4553eb9f43052082cbf9bf45b
+          path: dsh-loader
       - name: Set up Node.js
         uses: actions/setup-node@v6.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: dsh-network-settings/package-lock.json
           registry-url: ${{ env.NPM_REGISTRY }}
+      - name: Install loader dependencies
+        working-directory: dsh-loader
+        run: npm install --no-audit --no-fund
+      - name: Build loader workspace
+        working-directory: dsh-loader
+        run: npm run build
       - name: Install locked dependencies
         run: npm install --no-audit --no-fund
       - name: Type check
@@ -46,22 +64,43 @@ jobs:
         run: npm pack --dry-run
 
   smoke:
+    defaults:
+      run:
+        working-directory: dsh-network-settings
     name: Smoke test (network settings unit)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          path: dsh-network-settings
+      - name: Checkout loader 2.0 workspace
+        uses: actions/checkout@v6
+        with:
+          repository: dsh-plugins/dsh-loader
+          ref: 009ab1fef86616a4553eb9f43052082cbf9bf45b
+          path: dsh-loader
       - name: Set up Node.js
         uses: actions/setup-node@v6.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: dsh-network-settings/package-lock.json
+      - name: Install loader dependencies
+        working-directory: dsh-loader
+        run: npm install --no-audit --no-fund
+      - name: Build loader workspace
+        working-directory: dsh-loader
+        run: npm run build
       - name: Install locked dependencies
         run: npm install --no-audit --no-fund
       - name: Run tests
         run: npm test
 
   publish:
+    defaults:
+      run:
+        working-directory: dsh-network-settings
     name: Publish to npm
     needs: [quality, smoke]
     if: >-
@@ -74,12 +113,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          path: dsh-network-settings
+      - name: Checkout loader 2.0 workspace
+        uses: actions/checkout@v6
+        with:
+          repository: dsh-plugins/dsh-loader
+          ref: 009ab1fef86616a4553eb9f43052082cbf9bf45b
+          path: dsh-loader
       - name: Set up Node.js
         uses: actions/setup-node@v6.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: dsh-network-settings/package-lock.json
           registry-url: ${{ env.NPM_REGISTRY }}
+      - name: Install loader dependencies
+        working-directory: dsh-loader
+        run: npm install --no-audit --no-fund
+      - name: Build loader workspace
+        working-directory: dsh-loader
+        run: npm run build
       - name: Install locked dependencies
         run: npm install --no-audit --no-fund
       - name: Resolve publish version
