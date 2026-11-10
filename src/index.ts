@@ -9,6 +9,7 @@ import { installPiAiTimeout } from './pi-ai-timeout.js';
 import { probeProxy } from './probe.js';
 import { toProxy, loadConfig, configPath } from './legacy-config.js';
 import { fetchWithRetry } from './retry.js';
+import { installStreamRetry } from './stream-retry.js';
 import { applyUserAgent, shouldRewriteUA, DEFAULT_UA, type FetchType } from './ua.js';
 
 // ── 公共纯函数 re-export（测试 / 复用）──
@@ -67,14 +68,18 @@ export const Config = z.object({
   /** 等待响应头或下一段响应数据的空闲超时（毫秒）。 */
   requestIdleTimeoutMs: z.number().min(1).max(3_600_000).default(DEFAULT_REQUEST_IDLE_TIMEOUT_MS),
   // ── 请求重试 ──
-  /** 自动重试总开关：关闭时所有请求单次尝试。 */
+  /** 控制本插件发起的自动重试。 */
   retryEnabled: z.boolean().default(true),
-  /** 最大请求重试次数（0 = 不重试；网络错误或 429/5xx 时自动重试）。 */
+  /** 单次请求或模型步骤的重试次数上限，0 表示关闭本插件的重试。 */
   maxRetries: z.number().default(2),
 });
 
 /** 推断出的插件配置类型。 */
 export type PluginConfig = typeof Config extends z<infer T> ? T : never;
+
+function configuredRetries(config: PluginConfig): number {
+  return config.retryEnabled === true ? Math.max(0, Math.floor(config.maxRetries || 0)) : 0;
+}
 
 /** 把 fetch input 归一化成字符串 URL（供 NO_PROXY 判定等使用）。 */
 export function urlOf(input: RequestInfo | URL): string {
@@ -130,6 +135,7 @@ export async function apply(ctx: Context, injected: PluginConfig): Promise<void>
   const current = () => config.get().value;
 
   installPiAiTimeout(ctx, config);
+  installStreamRetry(ctx, () => configuredRetries(current()));
 
   if (typeof fetch !== 'function') {
     ctx.logger.warn('[dsh-network-settings] globalThis.fetch 不可用；网络设置失效');
@@ -165,7 +171,7 @@ export async function apply(ctx: Context, injected: PluginConfig): Promise<void>
         revision = snapshot.revision;
       }
       const requestInit = shouldRewriteUA(cfg) ? applyUserAgent(init, cfg.userAgent.trim(), input) : init;
-      const maxRetries = cfg.retryEnabled === true ? Math.max(0, Math.floor(cfg.maxRetries || 0)) : 0;
+      const maxRetries = configuredRetries(cfg);
       return transport.run(send => fetchWithRetry(input, requestInit, send, {
         maxRetries,
         onRetry: (attempt, info) => {
@@ -201,7 +207,7 @@ export async function apply(ctx: Context, injected: PluginConfig): Promise<void>
   ctx.logger.info(
     `[dsh-network-settings] 已加载（UA=${cfg.uaEnabled === true}, proxy=${cfg.proxyEnabled === true} ` +
     `${cfg.proxyEnabled === true ? `${cfg.proxyProtocol}://${cfg.proxyHost}:${cfg.proxyPort}` : ''}, ` +
-    `retry=${cfg.retryEnabled === true ? cfg.maxRetries : 0}）`,
+    `retry=${configuredRetries(cfg)}）`,
   );
 }
 

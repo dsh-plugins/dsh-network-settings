@@ -28,7 +28,7 @@ export function createConfigTemplate(base: PluginConfig) {
       ] },
       { type: 'group', label: '请求重试', fields: [
         { type: 'boolean', key: 'retryEnabled', label: '启用自动重试', default: base.retryEnabled },
-        { type: 'number', key: 'maxRetries', label: '最大重试次数', default: base.maxRetries, min: 0, max: 20, description: '0 表示不重试。取消请求与不可重放的流不会重试。' },
+        { type: 'number', key: 'maxRetries', label: '最大重试次数', default: base.maxRetries, min: 0, max: 20, description: '0 表示关闭本插件的重试。模型响应收到上游断流错误时，可重试当前模型步骤。' },
       ] },
     ],
   });
