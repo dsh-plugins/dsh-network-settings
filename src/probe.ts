@@ -90,6 +90,7 @@ export async function probeProxy(
 
     // 2) 经代理请求目标
     const r = await proxiedFetch(target, { method: 'GET', signal }, proxy, globalThis.fetch);
+    await r.body?.cancel();
     res.httpStatus = r.status;
     res.totalMs = Math.round(performance.now() - t0);
     res.ok = res.httpStatus < 400;

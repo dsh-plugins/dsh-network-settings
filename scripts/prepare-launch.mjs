@@ -8,7 +8,8 @@ const specs = JSON.parse(await readFile(new URL('../../dsh-loader/tests/fixtures
 const runtime = join(root, '.cache/runtime'); await mkdir(runtime, { recursive: true });
 await writeFile(join(runtime, 'package.json'), JSON.stringify({ private: true, dependencies: specs }, null, 2));
 const pnpm = process.env.PNPM_CLI ?? join(process.env.APPDATA ?? '', 'npm/node_modules/pnpm/bin/pnpm.cjs');
-const queue = Object.values(specs).map(spec => spec.split('@').at(-1));
+const selected = process.argv.filter(value => value.startsWith('--version=')).map(value => value.slice(10));
+const queue = Object.values(specs).map(spec => spec.split('@').at(-1)).filter(version => !selected.length || selected.includes(version));
 const alpha1Pin = process.argv.includes('--alpha1-app-boot-pin');
 async function worker() {
   while (queue.length) {

@@ -66,8 +66,7 @@ test('toCfg / toProxy 投影', () => {
     password: 'p',
     noProxy: ['127.0.0.1', 'localhost', '::1'],
   });
-  // noProxy 空 → 兜底回环列表
-  assert.deepEqual(toProxy({ noProxy: [] }).noProxy, ['127.0.0.1', 'localhost', '::1']);
+  assert.deepEqual(toProxy({ noProxy: [] }).noProxy, []);
   // 空凭据 → undefined（不发送 Proxy-Authorization）
   const empty = toProxy({});
   assert.equal(empty.username, undefined);

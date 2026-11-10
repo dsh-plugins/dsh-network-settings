@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 /**
  * NO_PROXY 判定（纯函数，移植自 dsh-net-proxy，TS 化）。
  */
@@ -41,16 +43,26 @@ export function isNoProxy(rawUrl: string, noProxy?: string[] | null): boolean {
     if (!e) continue;
     if (e === '*') return true;
     if (e === '<local>') {
-      if (host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '[::1]' || hostNoBrackets.startsWith('127.')) return true;
+      if (host === 'localhost' || host.endsWith('.localhost') || hostNoBrackets === '::1'
+        || (isIP(hostNoBrackets) === 4 && hostNoBrackets.startsWith('127.'))) {
+        return true;
+      }
       continue;
     }
-    // host:port
     let onlyHost = e;
-    if (port != null && /:\d+$/.test(e)) {
-      const ci = e.lastIndexOf(':');
-      const ePort = Number(e.slice(ci + 1));
-      if (ePort !== port) continue; // 端口不匹配，不算命中
-      onlyHost = e.slice(0, ci);
+    const withPort = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(e);
+    if (withPort) {
+      if (Number(withPort[2]) !== port) {
+        continue;
+      }
+      onlyHost = withPort[1];
+    }
+    const ipHost = onlyHost.replace(/^\[(.*)\]$/, '$1');
+    if (isIP(ipHost) === 6) {
+      if (host === new URL(`http://[${ipHost}]`).hostname) {
+        return true;
+      }
+      continue;
     }
     // CIDR
     if (onlyHost.includes('/')) {

@@ -87,6 +87,6 @@ export function toProxy(cfg?: Record<string, unknown> | null): {
     port: Number(c.port) || 7890,
     username: typeof c.username === 'string' && c.username ? c.username : undefined,
     password: typeof c.password === 'string' && c.password ? c.password : undefined,
-    noProxy: Array.isArray(c.noProxy) && c.noProxy.length ? (c.noProxy as string[]) : ['127.0.0.1', 'localhost', '::1'],
+    noProxy: Array.isArray(c.noProxy) ? c.noProxy : ['127.0.0.1', 'localhost', '::1'],
   };
 }

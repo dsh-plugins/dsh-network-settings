@@ -4,7 +4,8 @@ import { createConfigTemplate } from './config-template.js';
 type Context = CordisContext & { dshLoader: HostAPI; logger: Required<NonNullable<CordisContext['logger']>> };
 import { existsSync } from 'node:fs';
 import z from 'schemastery';
-import { proxiedFetch } from './proxy-fetch.js';
+import { createTransport, DEFAULT_PROXY_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_IDLE_TIMEOUT_MS } from './proxy/request.js';
+import { installPiAiTimeout } from './pi-ai-timeout.js';
 import { probeProxy } from './probe.js';
 import { toProxy, loadConfig, configPath } from './legacy-config.js';
 import { fetchWithRetry } from './retry.js';
@@ -39,7 +40,6 @@ export const DEFAULT_NO_PROXY = ['127.0.0.1', 'localhost', '::1'];
 
 /**
  * 「网络设置」插件配置 / settings schema。字段默认值在此，供 UI 渲染。
- * 三块：ua *（UA 设置）、proxy *（网络代理）、retryEnabled + maxRetries（请求重试）。
  */
 export const Config = z.object({
   // ── UA 设置 ──
@@ -62,8 +62,10 @@ export const Config = z.object({
   proxyPassword: z.string().default(''),
   /** NO_PROXY：命中则直连，默认排除本地回环。 */
   proxyNoProxy: z.array(z.string()).default(DEFAULT_NO_PROXY),
-  /** 代理请求超时（ms），默认 60000。 */
-  proxyTimeoutMs: z.number().default(60000),
+  /** 建立代理连接的超时（毫秒）。 */
+  proxyTimeoutMs: z.number().min(1).max(3_600_000).default(DEFAULT_PROXY_CONNECT_TIMEOUT_MS),
+  /** 等待响应头或下一段响应数据的空闲超时（毫秒）。 */
+  requestIdleTimeoutMs: z.number().min(1).max(3_600_000).default(DEFAULT_REQUEST_IDLE_TIMEOUT_MS),
   // ── 请求重试 ──
   /** 自动重试总开关：关闭时所有请求单次尝试。 */
   retryEnabled: z.boolean().default(true),
@@ -105,7 +107,7 @@ export function legacyProxyMerge(entry: PluginConfig): PluginConfig {
       proxyPort: record.port != null && Number.isFinite(Number(record.port)) ? Number(record.port) : entry.proxyPort,
       proxyUsername: typeof record.username === 'string' ? record.username : entry.proxyUsername,
       proxyPassword: typeof record.password === 'string' ? record.password : entry.proxyPassword,
-      proxyNoProxy: Array.isArray(record.noProxy) && record.noProxy.length ? (record.noProxy as string[]) : entry.proxyNoProxy,
+      proxyNoProxy: Array.isArray(record.noProxy) ? (record.noProxy as string[]) : entry.proxyNoProxy,
     };
   } catch {
     return entry;
@@ -127,28 +129,26 @@ export async function apply(ctx: Context, injected: PluginConfig): Promise<void>
   const config = await loader.config.register<PluginConfig>(ctx, createConfigTemplate(base));
   const current = () => config.get().value;
 
+  installPiAiTimeout(ctx, config);
+
   if (typeof fetch !== 'function') {
     ctx.logger.warn('[dsh-network-settings] globalThis.fetch 不可用；网络设置失效');
     return;
   }
 
-  /**
-   * 组装「重试 → UA → 代理 → 原始 fetch」四层栈。
-   *
-   * `original` 由 loader 的补丁协议给出：它保证拿到的是安装时刻槽里的真实值，
-   * 因此重复 apply（HMR / 配置更新）不会把上一层 wrapper 当成原值再包一层。
-   */
-  const buildStack = (original: FetchType): FetchType => {
-    // 内层：UA 改写 + 代理（每次调用读取最新策略，改设置下一条请求即生效）。
-    const inner: FetchType = (input, init) => {
-      const cfg = current();
-      let detached = init;
-      if (shouldRewriteUA(cfg)) {
-        detached = applyUserAgent(init, cfg.userAgent.trim());
-      }
-      const proxyEnabled = cfg.proxyEnabled === true;
-      if (proxyEnabled) {
-        const proxy = {
+  ctx.effect(() => {
+    let revision = -1;
+    let transport: ReturnType<typeof createTransport> | undefined;
+    const invalidateTransport = config.watch(() => {
+      transport?.retire();
+      transport = undefined;
+    });
+    const handle = loader.patch.global<FetchType>('fetch', original => (input, init) => {
+      const snapshot = config.get();
+      const cfg = snapshot.value;
+      if (!transport || revision !== snapshot.revision) {
+        transport?.retire();
+        const proxy = cfg.proxyEnabled ? {
           ...toProxy({
             protocol: cfg.proxyProtocol,
             host: cfg.proxyHost,
@@ -157,35 +157,30 @@ export async function apply(ctx: Context, injected: PluginConfig): Promise<void>
             password: cfg.proxyPassword,
             noProxy: cfg.proxyNoProxy,
           }),
-          timeout: cfg.proxyTimeoutMs,
-        };
-        return proxiedFetch(urlOf(input), detached ?? {}, proxy, original);
+          connectTimeout: cfg.proxyTimeoutMs,
+        } : undefined;
+        transport = createTransport(original, cfg.requestIdleTimeoutMs, proxy, error => {
+          ctx.logger.warn('[dsh-network-settings] 释放代理连接池失败', error);
+        });
+        revision = snapshot.revision;
       }
-      return original(input, detached);
-    };
-
-    // 外层：请求自动重试（最大重试次数）。
-    return (input, init) => {
-      const cfg = current();
+      const requestInit = shouldRewriteUA(cfg) ? applyUserAgent(init, cfg.userAgent.trim(), input) : init;
       const maxRetries = cfg.retryEnabled === true ? Math.max(0, Math.floor(cfg.maxRetries || 0)) : 0;
-      return fetchWithRetry(input, init, inner, {
+      return transport.run(send => fetchWithRetry(input, requestInit, send, {
         maxRetries,
         onRetry: (attempt, info) => {
           const reason = info.status !== undefined ? `HTTP ${info.status}` : String((info.error as Error | undefined)?.message ?? info.error);
           ctx.logger.info(`[dsh-network-settings] 自动重试 ${attempt}/${maxRetries}（${reason}），${info.delayMs}ms 后重发`);
         },
-      });
-    };
-  };
-
-  // 接管全局 fetch。原先此处有约 50 行标记簿记（__dshNetworkSettingsOriginalFetch
-  // 全局键、原值/wrapper 配对、还原前身份比对）；这些语义现在由 loader 的补丁协议
-  // 统一提供，且它的实现有测试锁定，插件只需声明「怎么包」。
-  ctx.effect(() => {
-    const handle = loader.patch.global<FetchType>('fetch', buildStack, {
+      }));
+    }, {
       id: 'dsh-network-settings:fetch', owner: ctx,
     });
-    return () => handle.dispose();
+    return () => {
+      handle.dispose();
+      invalidateTransport();
+      transport?.retire();
+    };
   }, 'dsh-network-settings: fetch network stack');
 
   // Diagnostics use the saved configuration; config writes belong to loader.
@@ -259,7 +254,8 @@ export function probeRoute(
           password: typeof p.password === 'string' ? p.password : cfg.proxyPassword,
           noProxy: cfg.proxyNoProxy,
         }),
-        timeout: cfg.proxyTimeoutMs,
+        timeout: cfg.requestIdleTimeoutMs,
+        connectTimeout: cfg.proxyTimeoutMs,
       };
       Promise.resolve(probeProxy(proxy)).then(
         (result) => send(200, result),

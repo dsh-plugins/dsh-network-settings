@@ -22,5 +22,6 @@
         proxyPassword: ''
         proxyNoProxy: ['127.0.0.1', 'localhost', '::1']
         proxyTimeoutMs: 60000
+        requestIdleTimeoutMs: 240000
         retryEnabled: true
         maxRetries: 2

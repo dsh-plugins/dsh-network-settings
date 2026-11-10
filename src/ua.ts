@@ -19,18 +19,11 @@ export interface UaPolicy {
 
 /**
  * 构造新的 `RequestInit`，将 `user-agent` 头固定为 `ua`，其余请求部分
- * （body / method / signal / 其它头）保持不变。没有 `init` 时也产出仅含
- * headers 的 init。纯函数，不发生 I/O，也不修改调用方对象。
+ * 保留。若调用方没有覆盖请求头，则继承 Request 自带的请求头。
  */
-export function applyUserAgent(init: RequestInit | undefined, ua: string): RequestInit {
-  let headers: Headers;
-  if (init !== undefined && init.headers !== undefined) {
-    headers = new Headers(init.headers);
-  } else {
-    headers = new Headers();
-  }
+export function applyUserAgent(init: RequestInit | undefined, ua: string, input?: RequestInfo | URL): RequestInit {
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
   headers.set('user-agent', ua);
-  if (init === undefined) return { headers } as RequestInit;
   return { ...init, headers };
 }
 

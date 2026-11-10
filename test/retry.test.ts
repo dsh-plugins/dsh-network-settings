@@ -210,3 +210,23 @@ test('sleep 已 abort 时立即拒绝，不再等待', async () => {
     (err: unknown) => (err as { name?: string }).name === 'AbortError',
   );
 });
+
+test('Request 自带的请求体只发送一次，取消信号会中断退避', async () => {
+  const request = new Request('http://example.invalid', { method: 'POST', body: 'payload' });
+  let calls = 0;
+  const delegate = async () => {
+    calls++;
+    return new Response(null, { status: 503 });
+  };
+  assert.equal((await fetchWithRetry(request, undefined, delegate, { maxRetries: 2 })).status, 503);
+  assert.equal(calls, 1);
+
+  const controller = new AbortController();
+  const reason = new Error('example cancellation');
+  const cancellable = new Request('http://example.invalid', { signal: controller.signal });
+  await assert.rejects(fetchWithRetry(cancellable, undefined, delegate, {
+    maxRetries: 2,
+    onRetry: () => controller.abort(reason),
+  }), error => error === reason);
+  assert.equal(calls, 2);
+});

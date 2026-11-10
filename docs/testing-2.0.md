@@ -66,3 +66,13 @@ node scripts/test-launch.mjs --version=0.2.2-alpha.2 --keep
 ```
 
 prepare 使用官方 npm 包及 peer 解析，各版独立安装。可通过 PNPM_CLI 指定 pnpm JS 入口。`--keep` 的带认证浏览器地址只写到 `.cache/launch/active.json`，不进入提交的验收记录。
+
+## pi-ai 超时回归
+
+以下命令使用两个隔离 profile，分别覆盖旧版设置命名空间和新版 Cordis 配置。测试将 HTTP 和 WebSocket 模型请求发往本地模拟上游，验证 240 秒默认值、保存后重载、显式提供商值和卸载后的宿主默认值。
+
+```sh
+node scripts/prepare-launch.mjs --version=0.1.5-rc.3 --version=0.2.2-alpha.2
+node scripts/test-launch.mjs --version=0.1.5-rc.3 --pi-ai
+node scripts/test-launch.mjs --version=0.2.2-alpha.2 --pi-ai
+```

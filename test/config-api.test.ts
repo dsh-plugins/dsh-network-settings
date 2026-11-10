@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConfigStore } from '../../dsh-loader/dist/services/config.js';
@@ -10,6 +10,10 @@ import { createConfigTemplate } from '../lib/config-template.js';
 
 test('config-api persists policies, applies saved edits immediately and releases the fetch layer', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'network-config-v2-'));
+  const configDir = join(directory, 'config/dsh-network-settings');
+  const file = join(configDir, 'config.json');
+  await mkdir(configDir, { recursive: true });
+  await writeFile(file, JSON.stringify({ formatVersion: 1, revision: 1, value: { proxyTimeoutMs: 60000 } }));
   const previousHome = process.env.DSH_HOME;
   process.env.DSH_HOME = directory;
   const store = new ConfigStore(directory);
@@ -32,12 +36,12 @@ test('config-api persists policies, applies saved edits immediately and releases
     assert.equal(await (await fetch('http://example.invalid')).text(), 'initial-test');
     const view = store.read('dsh-network-settings');
     assert.equal(view.template.packageName, '@dsh-plugin/dsh-network-settings');
-    assert.deepEqual(view.template.fields.map(field => field.type), ['group', 'group', 'group']);
+    assert.equal(view.value.requestIdleTimeoutMs, 240000);
+    assert.equal(view.value.proxyTimeoutMs, 60000);
     assert(!routes.has('/_dsh/dsh-network-settings/settings'));
     await store.write('dsh-network-settings', { userAgent: 'updated-test', proxyPassword: 'test-secret' }, view.revision);
     assert.equal(await (await fetch('http://example.invalid')).text(), 'updated-test');
     assert(!JSON.stringify(store.read('dsh-network-settings')).includes('test-secret'));
-    const file = join(directory, 'config/dsh-network-settings/config.json');
     assert.equal(JSON.parse(await readFile(file, 'utf8')).value.userAgent, 'updated-test');
     const captured = globalThis.fetch;
     const foreign = (...args: Parameters<typeof fetch>) => captured(...args);

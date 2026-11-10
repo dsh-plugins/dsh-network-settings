@@ -28,6 +28,9 @@ test('isNoProxy：host / 后缀 / host:port / CIDR / * / <local>', () => {
   assert.equal(isNoProxy('http://127.0.0.1:8080/', noProxy), true);
   assert.equal(isNoProxy('http://localhost:8080/', noProxy), true);
   assert.equal(isNoProxy('http://[::1]/', noProxy), true);
+  assert.equal(isNoProxy('http://[::1]:8080/', ['::1']), true);
+  assert.equal(isNoProxy('http://[::1]:8080/', ['[0:0:0:0:0:0:0:1]:8080']), true);
+  assert.equal(isNoProxy('http://[::1]:8080/', ['[::1]:8081']), false);
   // 未命中
   assert.equal(isNoProxy('https://deepseek.com/', noProxy), false);
   // 空数组 → 全走代理

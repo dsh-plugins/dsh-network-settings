@@ -26,15 +26,14 @@ const RETRYABLE_NETWORK_CODES: ReadonlySet<string> = new Set([
   'EHOSTUNREACH',
   'EAI_AGAIN',
   'ETIMEDOUT',
+  'ETIMEOUT',
   'EPIPE',
   'ECONNABORTED',
   'UND_ERR_CONNECT_TIMEOUT',
   'UND_ERR_SOCKET',
   'UND_ERR_HEADERS_TIMEOUT',
-  'UND_ERR_BODY_TIMEOUT',
   'UND_ERR_SOCKET_CLOSED_BEFORE_CONNECTION',
   'UND_ERR_DESTROYED',
-  'UND_ERR_REQ_CONTENT_LENGTH_MISMATCH',
 ]);
 
 /** 该错误是否为 AbortError（用户 / 外部取消）。 */
@@ -93,12 +92,14 @@ export function retryDelayMs(
 
 /** 可取消睡眠；signal 在等待中 abort 时以 AbortError 拒绝。 */
 export function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
-  if (signal?.aborted) return Promise.reject(abortError());
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason);
+  }
   return new Promise((resolve, reject) => {
     const onAbort = (): void => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      reject(abortError());
+      reject(signal?.reason);
     };
     const timer = setTimeout(() => {
       signal?.removeEventListener('abort', onAbort);
@@ -106,13 +107,6 @@ export function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-function abortError(): Error {
-  const e = new Error('The operation was aborted.');
-  e.name = 'AbortError';
-  (e as Error & { code: string }).code = 'ABORT_ERR';
-  return e;
 }
 
 /** fetchWithRetry 的可选参数。 */
@@ -141,34 +135,35 @@ export async function fetchWithRetry(
   options: FetchRetryOptions,
 ): Promise<Response> {
   const maxRetries = Math.max(0, Math.floor(options.maxRetries || 0));
-  if (maxRetries === 0) return delegate(input, init);
-  if (!isReplayableBody(init?.body)) return delegate(input, init);
+  const request = input instanceof Request ? input : undefined;
+  if (maxRetries === 0 || !isReplayableBody(init?.body ?? request?.body)) {
+    return delegate(input, init);
+  }
 
   const statuses = options.retryableStatus ?? DEFAULT_RETRYABLE_STATUS;
-  const opts = options;
+  const signal = init?.signal === undefined ? request?.signal : init.signal;
 
   for (let attempt = 0; ; attempt++) {
+    let response: Response;
     try {
-      const res = await delegate(input, init);
-      if (attempt >= maxRetries || !statuses.has(res.status)) return res;
-      // 准备重发：释放上一个响应的连接资源。
-      try {
-        if (res.body && typeof (res.body as { cancel?: () => Promise<void> }).cancel === 'function') {
-          await (res.body as { cancel: () => Promise<void> }).cancel();
-        }
-      } catch {
-        /* 忽略清理失败 */
-      }
-      const delayMs = retryDelayMs(attempt + 1, opts);
-      opts.onRetry?.(attempt + 1, { delayMs, status: res.status });
-      await sleep(delayMs, init?.signal);
+      response = await delegate(input, init);
     } catch (err) {
-      if (attempt >= maxRetries) throw err;
-      if (init?.signal?.aborted || isAbortLike(err)) throw err;
-      if (!isRetryableNetworkError(err)) throw err;
-      const delayMs = retryDelayMs(attempt + 1, opts);
-      opts.onRetry?.(attempt + 1, { delayMs, error: err });
-      await sleep(delayMs, init?.signal);
+      if (attempt >= maxRetries || signal?.aborted || !isRetryableNetworkError(err)) {
+        throw err;
+      }
+      const delayMs = retryDelayMs(attempt + 1, options);
+      options.onRetry?.(attempt + 1, { delayMs, error: err });
+      await sleep(delayMs, signal);
+      continue;
     }
+    if (attempt >= maxRetries || !statuses.has(response.status)) {
+      return response;
+    }
+    // 响应体已因网络错误进入错误状态时，连接已由传输层释放。
+    await response.body?.cancel().catch(() => undefined);
+    signal?.throwIfAborted();
+    const delayMs = retryDelayMs(attempt + 1, options);
+    options.onRetry?.(attempt + 1, { delayMs, status: response.status });
+    await sleep(delayMs, signal);
   }
 }

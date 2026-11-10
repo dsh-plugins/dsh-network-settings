@@ -1,187 +1,197 @@
-/**
- * proxiedFetch 入口：直连判定、请求头组装、https/http 协议分发、重定向跟随
- * （移植自 dsh-net-proxy，TS 化）。
- */
-import net from 'node:net';
-import tls from 'node:tls';
-import { ProxyError, timeoutFor } from './errors.js';
-import { connectProxy, httpConnect, socksConnect, type NetProxy } from './conn.js';
-import { sendViaSocket, type BodyLike } from './http11.js';
-import { sendViaHttp2 } from './http2.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { createPatchAPI } from '@dsh-plugin/dsh-loader/patch';
+import { Agent, Client, ProxyAgent, buildConnector, getGlobalDispatcher, type Dispatcher } from 'undici';
+import { socksConnect, type NetProxy } from './conn.js';
 import { isNoProxy } from './no-proxy.js';
+import type { FetchType } from '../ua.js';
 
-/** 原始 fetch 形状（dsh 的全局 fetch）。 */
+export const DEFAULT_REQUEST_IDLE_TIMEOUT_MS = 240_000;
+export const DEFAULT_PROXY_CONNECT_TIMEOUT_MS = 60_000;
+
+/** 支持原生 Fetch 参数及旧版探测调用使用的 URL 对象。 */
+export type FetchInput = RequestInfo | URL | { url?: string; method?: string };
 export type OriginalFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
-/** proxiedFetch 可接受的 input：字符串 URL 或带 url 的对象。 */
-export type FetchInput = string | { url?: string; method?: string };
+type FetchInit = RequestInit & { dispatcher?: Pick<Dispatcher, 'dispatch'> };
+type Dispatch = Dispatcher['dispatch'];
+type DispatchRoute = (options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler, direct: Dispatch) => boolean;
 
-/** 可直接 pipe 的 body 形状。 */
-type PipeableBody = { pipe(dest: unknown): unknown };
+const dispatchScope = new AsyncLocalStorage<{ target: Dispatcher; route: DispatchRoute }>();
+const defaultPatches = new WeakMap<Dispatcher, { active: number; dispose(): void }>();
 
-function directFetch(originalFetch: OriginalFetch, input: FetchInput, init?: RequestInit): Promise<Response> {
-  return originalFetch(input as string, init);
-}
-
-/** 将 RequestInit.body 归一化成可二次使用的字节/字符串/流。 */
-function normalizeBody(init: RequestInit): BodyLike {
-  const b = init.body;
-  if (b == null) return null;
-  if (b instanceof ArrayBuffer) return Buffer.from(b);
-  if (typeof b === 'string') return Buffer.from(b);
-  return b as unknown as PipeableBody;
-}
-
-async function proxiedOnce(
-  url: string,
-  init: RequestInit,
-  proxy: NetProxy,
-  originalFetch: OriginalFetch,
-): Promise<Response> {
-  const urlObj = new URL(url);
-  const method = (init.method || 'GET').toUpperCase();
-  const body = normalizeBody(init);
-  const signal = init.signal;
-
-  if (isNoProxy(url, proxy.noProxy)) {
-    return directFetch(originalFetch, url, init);
+async function fetchWithRequestDispatcher(original: FetchType, input: Request, init: RequestInit | undefined, route: DispatchRoute) {
+  const target = getGlobalDispatcher();
+  let patch = defaultPatches.get(target);
+  if (!patch) {
+    // Node 的 Request 可持有调用方指定的 dispatcher。让原生 Fetch 选择它，
+    // 仅在本次请求回到宿主默认 dispatcher 时应用插件策略。
+    const handle = createPatchAPI().method(target, 'dispatch', direct =>
+      function (this: Dispatcher, options, handler) {
+        const scope = dispatchScope.getStore();
+        if (scope?.target === target) {
+          return scope.route(options, handler, direct.bind(this));
+        }
+        return direct.call(this, options, handler);
+      }, { id: 'dsh-network-settings:request-dispatch' });
+    patch = { active: 0, dispose: handle.dispose };
+    defaultPatches.set(target, patch);
   }
-
-  const targetHostRaw = urlObj.hostname; // IPv6 形如 [::1]
-  const targetHost = targetHostRaw.startsWith('[') && targetHostRaw.endsWith(']') ? targetHostRaw.slice(1, -1) : targetHostRaw;
-  const defaultPort = urlObj.protocol === 'https:' ? 443 : 80;
-  const targetPort = urlObj.port ? Number(urlObj.port) : defaultPort;
-  // A1：Host 头默认端口省略；非默认才带 `:port`
-  const hostHeader = targetPort === defaultPort ? targetHostRaw : `${targetHostRaw}:${targetPort}`;
-  const isSocks = proxy.protocol === 'socks5' || proxy.protocol === 'socks';
-
-  // 组装请求头：正确处理 Headers 实例（forEach 才能取到内部 slot 的值）
-  const headers: Record<string, string> = {};
-  {
-    const src = init.headers;
-    if (src != null && typeof src === 'object') {
-      if (typeof Headers !== 'undefined' && src instanceof Headers) {
-        src.forEach((v, k) => {
-          headers[k] = v;
-        });
-      } else if (Array.isArray(src)) {
-        for (const [k, v] of src) headers[k] = String(v);
-      } else {
-        Object.assign(headers, src);
-      }
-    }
-  }
-  // 移除 hop-by-hop；A5：host 一律以计算值为准
-  ['proxy-connection', 'keep-alive', 'connection', 'upgrade', 'transfer-encoding', 'host', 'content-length', 'accept-encoding'].forEach(
-    (h) => delete headers[h],
-  );
-  // A4：尊重调用方显式 accept-encoding；未设置才默认 identity
-  let declaredAE: string | null = null;
-  {
-    const src = init.headers;
-    if (src != null && typeof src === 'object') {
-      if (typeof Headers !== 'undefined' && src instanceof Headers) declaredAE = src.get('accept-encoding');
-      else if (Array.isArray(src)) {
-        const f = src.find((x) => String(x[0]).toLowerCase() === 'accept-encoding');
-        declaredAE = f ? String(f[1]) : null;
-      } else if ('accept-encoding' in src) {
-        declaredAE = String((src as Record<string, unknown>)['accept-encoding']);
-      }
-    }
-  }
-  headers['accept-encoding'] = declaredAE != null && String(declaredAE).trim() !== '' ? String(declaredAE) : 'identity';
-
-  let raw: net.Socket;
+  patch.active++;
   try {
-    if (urlObj.protocol === 'https:') {
-      raw = isSocks ? await socksConnect(proxy, targetHost, targetPort, signal) : await httpConnect(proxy, targetHost, targetPort, signal);
-    } else if (urlObj.protocol !== 'http:') {
-      throw ProxyError('EPROTO', `unsupported protocol ${urlObj.protocol}`);
-    } else {
-      raw = await connectProxy(proxy, signal);
+    return await dispatchScope.run({ target, route }, () => original(input, init));
+  } finally {
+    if (--patch.active === 0) {
+      patch.dispose();
+      defaultPatches.delete(target);
     }
-  } catch (e) {
-    if (e && (e as { name?: string }).name === 'AbortError') throw e;
-    throw e;
   }
-
-  if (urlObj.protocol === 'https:') {
-    // B3：IP 目标不发 SNI
-    const isIP = net.isIP(targetHost);
-    const tlsSock = tls.connect({
-      socket: raw,
-      servername: isIP ? undefined : targetHost,
-      host: targetHost,
-      port: targetPort,
-      ALPNProtocols: ['h2', 'http/1.1'], // C2：协商 HTTP/2
-    });
-    await new Promise<void>((resolve, reject) => {
-      tlsSock.once('secureConnect', () => {
-        tlsSock.removeAllListeners('error');
-        resolve();
-      });
-      tlsSock.once('error', (e: Error) => reject(ProxyError('ETLS', `TLS to ${targetHost} failed: ${e.message}`, e)));
-    });
-    if (tlsSock.alpnProtocol === 'h2') {
-      // C2：服务器协商出 HTTP/2 → 走 HTTP/2；否则回退 HTTP/1.1
-      return sendViaHttp2(tlsSock, targetHost, targetPort, hostHeader, urlObj, method, headers, body, signal);
-    }
-    const path = urlObj.pathname + urlObj.search;
-    const h = { Host: hostHeader, Connection: 'close', ...headers };
-    const head = `${method} ${path} HTTP/1.1\r\n${Object.entries(h).map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n`;
-    return sendViaSocket(tlsSock, url, head, body, { signal, timeoutMs: timeoutFor(proxy) });
-  }
-
-  // HTTP 目标：绝对 URL + Host；有凭据时补 Proxy-Authorization（A3）
-  const sock = raw;
-  const absUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}${urlObj.search}`;
-  const proxyAuth = proxy.username || proxy.password
-    ? { 'Proxy-Authorization': 'Basic ' + Buffer.from(`${proxy.username || ''}:${proxy.password || ''}`).toString('base64') }
-    : {};
-  const h = { Host: urlObj.host, Connection: 'close', ...proxyAuth, ...headers };
-  const head = `${method} ${absUrl} HTTP/1.1\r\n${Object.entries(h).map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n`;
-  return sendViaSocket(sock, url, head, body, { signal, timeoutMs: timeoutFor(proxy) });
 }
 
-// 外层：跟随 30x 重定向（最多 5 跳），对齐标准 fetch。
+function makeProxyDispatcher(proxy: NetProxy, pendingConnections: Set<AbortController>): Dispatcher {
+  const timeout = Math.trunc(proxy.connectTimeout ?? DEFAULT_PROXY_CONNECT_TIMEOUT_MS);
+  if (proxy.protocol === 'socks5' || proxy.protocol === 'socks') {
+    const tls = buildConnector({ allowH2: true, timeout });
+    return new Agent({
+      allowH2: true,
+      connect(options, callback) {
+        const host = options.hostname.replace(/^\[(.*)\]$/, '$1');
+        const secure = options.protocol === 'https:';
+        const port = Number(options.port) || (secure ? 443 : 80);
+        const controller = new AbortController();
+        pendingConnections.add(controller);
+        const connected: buildConnector.Callback = (...args) => {
+          pendingConnections.delete(controller);
+          callback(...args);
+        };
+        void socksConnect(proxy, host, port, timeout, controller.signal).then(
+          socket => {
+            if (secure) {
+              try {
+                tls({ ...options, hostname: host, httpSocket: socket }, connected);
+              } catch (error) {
+                socket.destroy();
+                connected(error as Error, null);
+              }
+            } else {
+              connected(null, socket);
+            }
+          },
+          (error: Error) => connected(error, null),
+        );
+      },
+    });
+  }
+
+  const host = proxy.host.includes(':') && !proxy.host.startsWith('[') ? `[${proxy.host}]` : proxy.host;
+  if (/[\s\\/?#@]/.test(host)) {
+    throw new TypeError('HTTP 代理地址必须为主机名或 IP 地址');
+  }
+  const endpoint = new URL(`http://${host}:${proxy.port}`);
+  if (endpoint.pathname !== '/' || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) {
+    throw new TypeError('HTTP 代理地址必须为主机名或 IP 地址');
+  }
+  const token = proxy.username || proxy.password
+    ? `Basic ${Buffer.from(`${proxy.username ?? ''}:${proxy.password ?? ''}`).toString('base64')}`
+    : undefined;
+  return new ProxyAgent({
+    uri: endpoint.href,
+    proxyTunnel: false,
+    allowH2: true,
+    token,
+    proxyTls: { timeout },
+    requestTls: { timeout, allowH2: true },
+    clientFactory: (origin, options) => new Client(origin, { ...options, headersTimeout: timeout }),
+  });
+}
+
+export function createTransport(original: FetchType, timeoutMs: number, proxy?: NetProxy, onCloseError?: (error: unknown) => void) {
+  let agent: Dispatcher | undefined;
+  const pendingConnections = new Set<AbortController>();
+  let active = 0;
+  let retired = false;
+
+  const closeWhenIdle = () => {
+    if (retired && active === 0 && agent) {
+      const closing = agent;
+      agent = undefined;
+      // close 等待已返回给调用方的响应体结束，因此清理不能阻塞 fetch。
+      void closing.close().catch(error => {
+        if (onCloseError) {
+          onCloseError(error);
+        } else {
+          console.error('[dsh-network-settings] 释放代理连接池失败', error);
+        }
+      });
+    }
+  };
+  const idle = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? Math.max(1, Math.trunc(timeoutMs))
+    : DEFAULT_REQUEST_IDLE_TIMEOUT_MS;
+  const route: DispatchRoute = (options, handler, direct) => {
+    const timed = { ...options, headersTimeout: idle, bodyTimeout: idle };
+    if (!proxy || isNoProxy(String(options.origin), proxy.noProxy)) {
+      return direct(timed, handler);
+    }
+    agent ??= makeProxyDispatcher(proxy, pendingConnections);
+    return agent.dispatch(timed, handler);
+  };
+  const dispatcher: Pick<Dispatcher, 'dispatch'> = {
+    dispatch(options, handler) {
+      const direct = getGlobalDispatcher();
+      return route(options, handler, direct.dispatch.bind(direct));
+    },
+  };
+
+  const fetch: FetchType = (input, init?: FetchInit) => {
+    if (init?.dispatcher) {
+      return original(input, init);
+    }
+    if (input instanceof Request) {
+      return fetchWithRequestDispatcher(original, input, init, route);
+    }
+    const timed: FetchInit = { ...init, dispatcher };
+    return original(input, timed);
+  };
+
+  return {
+    async run(call: (send: FetchType) => Promise<Response>) {
+      active++;
+      try {
+        return await call(fetch);
+      } finally {
+        active--;
+        if (active === 0) {
+          for (const controller of pendingConnections) {
+            controller.abort();
+          }
+        }
+        closeWhenIdle();
+      }
+    },
+    retire() {
+      retired = true;
+      closeWhenIdle();
+    },
+  };
+}
+
+/** 使用代理发送单个 Fetch 请求，保留原生 Fetch 的输入和响应语义。 */
 export async function proxiedFetch(
   input: FetchInput,
   init: RequestInit = {},
   proxy: NetProxy,
-  originalFetch: OriginalFetch,
+  originalFetch: FetchType | OriginalFetch,
 ): Promise<Response> {
-  let url = typeof input === 'string' ? input : input?.url ?? String(input);
-  if (!url) throw new Error('proxiedFetch: invalid input');
-  let cur: RequestInit = { ...(init || {}) };
-  if (input && typeof input === 'object' && input.url && !cur.method) cur.method = input.method || 'GET';
-  for (let i = 0; i < 6; i++) {
-    try {
-      const resp = await proxiedOnce(url, cur, proxy, originalFetch);
-      const st = resp.status;
-      if (st === 301 || st === 302 || st === 303 || st === 307 || st === 308) {
-        const loc = resp.headers ? resp.headers.get('location') : null;
-        if (loc) {
-          const next = new URL(loc, url).href;
-          const curMethod = (cur.method || 'GET').toUpperCase();
-          const toGet = st === 303 || ((st === 301 || st === 302) && curMethod !== 'HEAD');
-          cur = { ...cur, method: toGet ? 'GET' : curMethod };
-          if (toGet) delete cur.body;
-          try {
-            if (resp.body && typeof (resp.body as { cancel?: () => Promise<void> }).cancel === 'function') {
-              await (resp.body as { cancel: () => Promise<void> }).cancel();
-            }
-          } catch {
-            /* 忽略 */
-          }
-          url = next;
-          continue;
-        }
-      }
-      return resp;
-    } catch (e) {
-      if (e && (e as { name?: string }).name === 'AbortError') throw e;
-      throw e;
-    }
+  if (typeof input !== 'string' && !(input instanceof URL) && !(input instanceof Request)) {
+    init = { ...init, method: init.method ?? input.method };
+    input = input.url ?? String(input);
   }
-  throw ProxyError('EREDIRECT', 'proxiedFetch: too many redirects');
+  const transport = createTransport(
+    originalFetch as FetchType, proxy.timeout ?? DEFAULT_REQUEST_IDLE_TIMEOUT_MS, proxy,
+  );
+  try {
+    return await transport.run(send => send(input as RequestInfo | URL, init));
+  } finally {
+    transport.retire();
+  }
 }

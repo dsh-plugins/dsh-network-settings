@@ -58,7 +58,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "schemastery": "^3.18.0"
+    "schemastery": "^3.18.0",
+    "undici": "^7.30.2"
   },
   "peerDependencies": {
     "@dsh-plugin/dsh-loader": "^2.0.0"

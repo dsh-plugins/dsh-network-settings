@@ -7,7 +7,7 @@ export function createConfigTemplate(base: PluginConfig) {
     id: 'dsh-network-settings',
     packageName: '@dsh-plugin/dsh-network-settings',
     title: '网络设置',
-    description: 'User-Agent、代理与请求重试。保存后对下一条请求生效。',
+    description: '设置 User-Agent、代理、响应空闲超时与重试。更改空闲超时后自动重载 pi-ai 适配器。',
     fields: [
       { type: 'group', label: 'User-Agent', fields: [
         { type: 'boolean', key: 'uaEnabled', label: '改写 User-Agent', default: base.uaEnabled },
@@ -20,8 +20,11 @@ export function createConfigTemplate(base: PluginConfig) {
         { type: 'number', key: 'proxyPort', label: '代理端口', default: base.proxyPort, min: 1, max: 65535 },
         { type: 'text', key: 'proxyUsername', label: '用户名', default: base.proxyUsername },
         { type: 'password', key: 'proxyPassword', label: '密码', default: base.proxyPassword, description: '留空保持已保存密码；使用“清空”显式删除。' },
-        { type: 'array', key: 'proxyNoProxy', label: '直连规则', default: base.proxyNoProxy, description: '支持域名、后缀、host:port、IPv4 CIDR、* 与 <local>。', item: { type: 'text', label: '规则', required: true } },
-        { type: 'number', key: 'proxyTimeoutMs', label: '超时（毫秒）', default: base.proxyTimeoutMs, min: 1, max: 3600000 },
+        { type: 'array', key: 'proxyNoProxy', label: '直连规则', default: base.proxyNoProxy, description: '支持域名、后缀、host:port、IPv4 CIDR、* 与 <local>。清空后所有目标均可使用代理。', item: { type: 'text', label: '规则', required: true } },
+        { type: 'number', key: 'proxyTimeoutMs', label: '代理建连超时（毫秒）', default: base.proxyTimeoutMs, min: 1, max: 3600000 },
+      ] },
+      { type: 'group', label: '请求超时', fields: [
+        { type: 'number', key: 'requestIdleTimeoutMs', label: '响应空闲超时（毫秒）', default: base.requestIdleTimeoutMs, min: 1, max: 3600000, description: '等待响应头或下一段数据的最长时间。持续输出的流可以继续。此值也是 pi-ai 模型的默认流式空闲超时。' },
       ] },
       { type: 'group', label: '请求重试', fields: [
         { type: 'boolean', key: 'retryEnabled', label: '启用自动重试', default: base.retryEnabled },
