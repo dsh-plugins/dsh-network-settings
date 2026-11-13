@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" role="img" aria-label="Network settings">
+  <circle cx="7.5" cy="18" r="3.5" fill="#176b5b"/>
+  <circle cx="28.5" cy="18" r="3.5" fill="none" stroke="#176b5b" stroke-width="2.8"/>
+  <path d="M12.6 18h10.8" fill="none" stroke="#db6b2c" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="3.4 4"/>
+</svg>

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "网络设置",
+    "description": "改写 User-Agent，支持 HTTP、CONNECT 与 SOCKS5 代理、响应空闲超时和请求自动重试。"
+  }
+}

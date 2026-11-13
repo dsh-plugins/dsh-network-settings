@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Network settings",
+    "description": "Rewrites the User-Agent, routes requests through an HTTP, CONNECT, or SOCKS5 proxy, applies response idle timeouts, and retries failed requests."
+  }
+}

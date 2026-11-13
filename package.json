@@ -17,7 +17,9 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
   },
   "files": [
     "lib",
@@ -26,7 +28,9 @@
     "README.md",
     "README.zh_CN.md",
     "LICENSE",
-    "docs"
+    "docs",
+    "locale",
+    "icon.svg"
   ],
   "engines": {
     "node": ">=24.9.0"
