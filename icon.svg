@@ -1,5 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" role="img" aria-label="Network settings">
-  <circle cx="7.5" cy="18" r="3.5" fill="#176b5b"/>
-  <circle cx="28.5" cy="18" r="3.5" fill="none" stroke="#176b5b" stroke-width="2.8"/>
-  <path d="M12.6 18h10.8" fill="none" stroke="#db6b2c" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="3.4 4"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none" role="img" aria-label="Network settings">
+  <path d="M15 18h6" stroke="#86B8F5" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="2.4 3"/>
+  <rect x="4.4" y="11.6" width="11" height="12.8" rx="3.4" fill="url(#net-a)"/>
+  <path d="M7.6 15.4h4.6M7.6 18h3.2M7.6 20.6h4.6" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="20.6" y="11.6" width="11" height="12.8" rx="3.4" stroke="url(#net-a)" stroke-width="2.4"/>
+  <path d="M23.4 18h5.4M26.1 15.3v5.4" stroke="url(#net-a)" stroke-width="2.1" stroke-linecap="round"/>
+  <circle cx="18" cy="18" r="2.7" fill="#45D9E7"/>
+  <defs>
+    <linearGradient id="net-a" x1="4.4" y1="11.6" x2="31.6" y2="24.4" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6DB9FB"/>
+      <stop offset="1" stop-color="#3650DE"/>
+    </linearGradient>
+  </defs>
 </svg>
