@@ -13,6 +13,7 @@
     "access": "public"
   },
   "exports": {
+    "./loader-check": "./loader-check.mjs",
     ".": {
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
@@ -22,6 +23,7 @@
     "./icon": "./icon.svg"
   },
   "files": [
+    "loader-check.mjs",
     "lib",
     "src",
     "cordis.patch.yml",

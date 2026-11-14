@@ -8,6 +8,8 @@
 # profile layer adds afterwards can still target this entry by its stable id.
 # dsh-loader 2.0 renders the configuration template in the version-specific UI.
 - insert:
+    - id: dsh-network-settings-loader-check
+      name: '@dsh-plugin/dsh-network-settings/loader-check'
     # Stable id so later layers can patch/disable this row by id.
     - id: dsh-network-settings
       name: '@dsh-plugin/dsh-network-settings'
