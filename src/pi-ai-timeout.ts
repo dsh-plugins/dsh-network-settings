@@ -1,6 +1,6 @@
 import type { CordisContext, HostAPI } from '@dsh-plugin/dsh-loader';
 import type { ConfigHandle } from '@dsh-plugin/dsh-loader/config';
-import type { PluginConfig } from './index.js';
+import type { NetworkPolicyConfig } from './index.js';
 
 const PI_AI = '@deepseek-ai/dsh-llm-pi-ai';
 const PI_AI_NAMESPACE = 'llm-pi-ai';
@@ -45,7 +45,7 @@ function withIdleDefault(raw: unknown, timeout: number): unknown {
 
 export function installPiAiTimeout(
   ctx: CordisContext & { dshLoader: HostAPI; root?: unknown },
-  config: ConfigHandle<PluginConfig>,
+  config: Pick<ConfigHandle<NetworkPolicyConfig>, 'get' | 'watch'>,
 ): void {
   const loader = ctx.dshLoader.services.get('loader') as { entries?(): Iterable<Entry> } | undefined;
   const on = ctx.on?.bind(ctx);

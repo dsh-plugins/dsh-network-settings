@@ -1,6 +1,6 @@
 /** Network policies use loader 2.0 config handles; form rendering and storage are loader-owned. */
 import type { CordisContext, HostAPI } from '@dsh-plugin/dsh-loader';
-import { createConfigTemplate } from './config-template.js';
+import { createConfigTemplate, createConnectionTemplate, createLegacyConfigTemplate } from './config-template.js';
 type Context = CordisContext & { dshLoader: HostAPI; logger: Required<NonNullable<CordisContext['logger']>> };
 import { existsSync } from 'node:fs';
 import z from 'schemastery';
@@ -26,11 +26,12 @@ export {
 export { isNoProxy, proxiedFetch } from './proxy-fetch.js';
 export type { NetProxy } from './proxy-fetch.js';
 export { probeProxy, type ProbeResult } from './probe.js';
+export { POLICY_CONFIG_ID, CONNECTION_CONFIG_ID } from './config-template.js';
 
 /** Cordis / npm 插件名（loader 诊断用）。 */
 export const name = '@dsh-plugin/dsh-network-settings';
 
-/** 稳定命名空间 id（仅允许 [a-z0-9-]，config-api 配置目录 ID）。 */
+/** 插件标识，亦用于读取旧版合并配置。 */
 export const PLUGIN_ID = 'dsh-network-settings';
 
 /** 代理协议支持列表（与 dsh-net-proxy 保持一致）。 */
@@ -76,8 +77,14 @@ export const Config = z.object({
 
 /** 推断出的插件配置类型。 */
 export type PluginConfig = typeof Config extends z<infer T> ? T : never;
+/** 代理连接信息保存在本机配置档。 */
+export type ProxyConnectionConfig = Pick<PluginConfig,
+  'proxyEnabled' | 'proxyProtocol' | 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword'>;
+/** 可随整合包移植的网络策略。 */
+export type NetworkPolicyConfig = Pick<PluginConfig,
+  'uaEnabled' | 'userAgent' | 'proxyNoProxy' | 'proxyTimeoutMs' | 'requestIdleTimeoutMs' | 'retryEnabled' | 'maxRetries'>;
 
-function configuredRetries(config: PluginConfig): number {
+function configuredRetries(config: NetworkPolicyConfig): number {
   return config.retryEnabled === true ? Math.max(0, Math.floor(config.maxRetries || 0)) : 0;
 }
 
@@ -94,7 +101,7 @@ export function urlOf(input: RequestInfo | URL): string {
 
 /**
  * 迁移：读取旧 dsh-net-proxy 的 `net-proxy.json`，把其中的代理字段并入 base。
- * 仅作兜底层 —— 用户通过 config-api 保存的值永远优先。
+ * 旧文件提供初始默认值。已保存的配置档设置优先。
  */
 export function legacyProxyMerge(entry: PluginConfig): PluginConfig {
   try {
@@ -131,11 +138,28 @@ export const inject = ['dshLoader'];
 export async function apply(ctx: Context, injected: PluginConfig): Promise<void> {
   const loader = ctx.dshLoader;
   const base = legacyProxyMerge(Config(injected));
-  const config = await loader.config.register<PluginConfig>(ctx, createConfigTemplate(base));
-  const current = () => config.get().value;
+  const config = await loader.config.register<NetworkPolicyConfig>(ctx, createConfigTemplate(base));
+  const connection = await loader.config.register<ProxyConnectionConfig>(ctx, createConnectionTemplate(base));
+
+  if (config.get().revision === 0 || connection.get().revision === 0) {
+    const legacy = await loader.config.register<PluginConfig>(ctx, createLegacyConfigTemplate(PLUGIN_ID, base));
+    const previous = legacy.get();
+    legacy.dispose();
+
+    if (previous.revision > 0) {
+      const { proxyEnabled, proxyProtocol, proxyHost, proxyPort, proxyUsername, proxyPassword, ...policy } = previous.value;
+      if (connection.get().revision === 0) {
+        await connection.update({ proxyEnabled, proxyProtocol, proxyHost, proxyPort, proxyUsername, proxyPassword }, 0);
+      }
+      if (config.get().revision === 0) {
+        await config.update(policy, 0);
+      }
+    }
+  }
+  const current = (): PluginConfig => ({ ...config.get().value, ...connection.get().value });
 
   installPiAiTimeout(ctx, config);
-  installStreamRetry(ctx, () => configuredRetries(current()));
+  installStreamRetry(ctx, () => configuredRetries(config.get().value));
 
   if (typeof fetch !== 'function') {
     ctx.logger.warn('[dsh-network-settings] globalThis.fetch 不可用；网络设置失效');
@@ -143,24 +167,29 @@ export async function apply(ctx: Context, injected: PluginConfig): Promise<void>
   }
 
   ctx.effect(() => {
-    let revision = -1;
+    let policyRevision = -1;
+    let connectionRevision = -1;
     let transport: ReturnType<typeof createTransport> | undefined;
-    const invalidateTransport = config.watch(() => {
+    const invalidateTransport = () => {
       transport?.retire();
       transport = undefined;
-    });
+    };
+    const unwatchPolicy = config.watch(invalidateTransport);
+    const unwatchConnection = connection.watch(invalidateTransport);
     const handle = loader.patch.global<FetchType>('fetch', original => (input, init) => {
       const snapshot = config.get();
+      const proxySnapshot = connection.get();
       const cfg = snapshot.value;
-      if (!transport || revision !== snapshot.revision) {
+      const proxyConfig = proxySnapshot.value;
+      if (!transport || policyRevision !== snapshot.revision || connectionRevision !== proxySnapshot.revision) {
         transport?.retire();
-        const proxy = cfg.proxyEnabled ? {
+        const proxy = proxyConfig.proxyEnabled ? {
           ...toProxy({
-            protocol: cfg.proxyProtocol,
-            host: cfg.proxyHost,
-            port: cfg.proxyPort,
-            username: cfg.proxyUsername,
-            password: cfg.proxyPassword,
+            protocol: proxyConfig.proxyProtocol,
+            host: proxyConfig.proxyHost,
+            port: proxyConfig.proxyPort,
+            username: proxyConfig.proxyUsername,
+            password: proxyConfig.proxyPassword,
             noProxy: cfg.proxyNoProxy,
           }),
           connectTimeout: cfg.proxyTimeoutMs,
@@ -168,7 +197,8 @@ export async function apply(ctx: Context, injected: PluginConfig): Promise<void>
         transport = createTransport(original, cfg.requestIdleTimeoutMs, proxy, error => {
           ctx.logger.warn('[dsh-network-settings] 释放代理连接池失败', error);
         });
-        revision = snapshot.revision;
+        policyRevision = snapshot.revision;
+        connectionRevision = proxySnapshot.revision;
       }
       const requestInit = shouldRewriteUA(cfg) ? applyUserAgent(init, cfg.userAgent.trim(), input) : init;
       const maxRetries = configuredRetries(cfg);
@@ -184,8 +214,9 @@ export async function apply(ctx: Context, injected: PluginConfig): Promise<void>
     });
     return () => {
       handle.dispose();
+      unwatchPolicy();
+      unwatchConnection();
       invalidateTransport();
-      transport?.retire();
     };
   }, 'dsh-network-settings: fetch network stack');
 

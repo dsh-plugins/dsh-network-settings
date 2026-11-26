@@ -25,6 +25,7 @@
   "files": [
     "loader-check.mjs",
     "lib",
+    "dsh_pack/",
     "src",
     "cordis.patch.yml",
     "README.md",

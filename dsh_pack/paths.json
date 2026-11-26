@@ -1,0 +1,13 @@
+{
+  "name": {
+    "zh-CN": "网络策略",
+    "en": "Network policy"
+  },
+  "desc": {
+    "zh-CN": "包含 User-Agent、代理直连规则、连接超时、响应超时与重试设置。",
+    "en": "Includes User-Agent, proxy bypass rules, connection and response timeouts, and retries."
+  },
+  "paths": [
+    "./profiles/<profile>/config/dsh-network-settings-policy/config.json"
+  ]
+}

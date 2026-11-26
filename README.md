@@ -2,9 +2,9 @@
 
 User-Agent rewriting, HTTP / CONNECT / SOCKS5 proxying, response idle timeouts, and request retries for DSH. Requires **dsh-loader ^2.0.0** and **Node.js >=24.9.0**.
 
-The loader renders one Network card for User-Agent, proxy, idle timeout, and retry settings. Save, cancel, and restore defaults apply to the whole card.
+The loader exposes separate Network Policy and Local Proxy Connection cards.
 
-Before `0.1.6-alpha.2`, open Settings → Plugin configuration. On newer versions, open this plugin's detail page. Configuration lives at `<profile>/config/dsh-network-settings/config.json`; password values stay opaque in browser responses and revision conflicts preserve drafts.
+Before `0.1.6-alpha.2`, open Settings → Plugin configuration. On newer versions, open this plugin's detail page. Network policy is stored in `<profile>/config/dsh-network-settings-policy/config.json` and can be selected in PackForge. The proxy switch, endpoint, and credentials stay in `<profile>/config/dsh-network-settings-connection/config.json`, which PackForge excludes. The browser receives an opaque password reference.
 
 `requestIdleTimeoutMs` defaults to 240 seconds. It limits the wait for response headers and the gap between chunks. A stream can run longer while data keeps arriving. The previous `proxyTimeoutMs` field controls proxy connection setup.
 
@@ -12,7 +12,7 @@ Saved changes apply to subsequent HTTP requests. The plugin reloads pi-ai after 
 
 The proxy supports authentication, bypass rules, redirects, and compressed responses. An empty bypass list lets the plugin proxy handle all destinations. Requests with an explicit dispatcher keep the caller's transport settings. Replayable requests can retry on response-header timeouts, eligible network errors, and HTTP 429/500/502/503/504.
 
-The old custom UI and settings write route have been removed. Composition values and the legacy `$DSH_HOME/net-proxy.json` seed defaults; saved profile configuration takes precedence. Old settings namespaces are not moved automatically. Record custom namespace values before upgrading and save them through the new form.
+The old custom UI and settings write route have been removed. On startup, saved values in the former `<profile>/config/dsh-network-settings/config.json` fill any unsaved replacement configuration. Composition values and the legacy `$DSH_HOME/net-proxy.json` still seed defaults. The configuration API uses `dsh-network-settings-policy` and `dsh-network-settings-connection` as its configuration IDs. PackForge excludes both legacy inputs. Move any credentials set in a Cordis patch to Local Proxy Connection and remove them from the patch before sharing. Old settings namespaces are not moved automatically. Record custom namespace values before upgrading and save them through the new form.
 
 The authenticated `/_dsh/dsh-network-settings/probe` endpoint remains available (GET health check, POST connectivity probe). Declarative templates have no custom action button, so this version does not include the old custom Test Connection button.
 

@@ -2,11 +2,12 @@
 
 为 DSH 提供 User-Agent 改写、HTTP / CONNECT / SOCKS5 代理、响应空闲超时和请求自动重试。依赖 **dsh-loader ^2.0.0** 与 **Node.js >=24.9.0**。
 
-配置由 loader 生成，所有设置共用「网络设置」卡片中的保存、取消和恢复默认值操作。
+配置由 loader 生成，可在「网络策略」和「本机代理连接」卡片中分别保存。
 
 - 早于 `0.1.6-alpha.2`：设置 → 插件配置。
 - 从 `0.1.6-alpha.2` 起：插件 → `@dsh-plugin/dsh-network-settings` 详情。
-- 文件：`<profile>/config/dsh-network-settings/config.json`。密码不以明文回传浏览器，修订冲突不会覆盖草稿。
+- 网络策略保存在 `<profile>/config/dsh-network-settings-policy/config.json`，可在 PackForge 导出时勾选。
+- 代理开关、端点及凭据保存在 `<profile>/config/dsh-network-settings-connection/config.json`。PackForge 排除该目录，浏览器只收到密码引用。
 
 「响应空闲超时」默认 240 秒，可在 `requestIdleTimeoutMs` 中以毫秒设置。它分别限制等待响应头和等待下一段响应数据的时间，持续返回数据的长响应可以继续。升级后，旧 `proxyTimeoutMs` 只用于建立代理连接。
 
@@ -18,7 +19,7 @@
 
 ## 迁移与诊断
 
-旧自管配置页面和 `/_dsh/dsh-network-settings/settings` 路由已移除。entry 配置和旧 `$DSH_HOME/net-proxy.json` 仍作为首次注册的默认值；新文件存在时以已保存值为准。旧 settings namespace 不会自动搬迁，升级前请记录其中的自定义值，在新表单中保存。卸载不删除配置文件。
+旧自管配置页面和 `/_dsh/dsh-network-settings/settings` 路由已移除。启动时将旧 `<profile>/config/dsh-network-settings/config.json` 分别迁移到尚未保存的新配置文件。组合配置和旧 `$DSH_HOME/net-proxy.json` 提供默认值。配置 API 使用 `dsh-network-settings-policy` 和 `dsh-network-settings-connection` 两个 ID。旧文件留在本机，PackForge 排除这些文件。已有通过 Cordis 补丁填写的认证信息，应移入「本机代理连接」卡片并从补丁删除后再分享。旧 settings namespace 不会自动搬迁，升级前请记录其中的自定义值，在新表单中保存。卸载不删除配置文件。
 
 连接探测接口 `/_dsh/dsh-network-settings/probe` 保留，并使用宿主浏览器认证。GET 探活，POST 使用已保存配置或显式代理覆盖进行连通性测试。统一配置模板没有自定义动作按钮，因此 2.0 不再附带插件自管的“测试连接”按钮。
 

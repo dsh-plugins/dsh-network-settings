@@ -11,6 +11,7 @@ import { test, type TestContext } from 'node:test';
 import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { MockAgent } from 'undici';
 import { createPatchAPI } from '@dsh-plugin/dsh-loader/patch';
+import { validateValues, type ConfigSnapshot, type ConfigTemplate } from '@dsh-plugin/dsh-loader/config';
 import { apply, Config, proxiedFetch, type PluginConfig } from '../lib/index.js';
 
 async function listen(t: TestContext, server: Server | ReturnType<typeof createTcpServer> | Http2SecureServer): Promise<number> {
@@ -34,11 +35,11 @@ test('全局 fetch 保留 Request 鉴权，代理重定向重新匹配直连规�
   const original = globalThis.fetch;
   const cleanups: (() => void)[] = [];
   let state = { value: Config({ userAgent: 'network-test', retryEnabled: false }), revision: 0 };
-  const listeners = new Set<(snapshot: typeof state) => void>();
+  const listeners = new Set<() => void>();
   const configure = (patch: Partial<PluginConfig>) => {
     state = { value: { ...state.value, ...patch }, revision: state.revision + 1 };
     for (const listener of listeners) {
-      listener(state);
+      listener();
     }
   };
   await apply({
@@ -53,13 +54,19 @@ test('全局 fetch 保留 Request 鉴权，代理重定向重新匹配直连规�
       patch: createPatchAPI(),
       services: { get: () => undefined },
       config: {
-        async register() {
+        async register(_owner: unknown, template: ConfigTemplate) {
+          const get = () => ({
+            value: validateValues(template.fields, state.value),
+            revision: template.id === 'dsh-network-settings' ? 0 : state.revision,
+          });
           return {
-            get: () => state,
-            watch: (listener: (snapshot: typeof state) => void) => {
-              listeners.add(listener);
-              return () => listeners.delete(listener);
+            get,
+            watch: (listener: (snapshot: ConfigSnapshot) => void) => {
+              const notify = () => listener(get());
+              listeners.add(notify);
+              return () => listeners.delete(notify);
             },
+            dispose() {},
           };
         },
       },
@@ -189,10 +196,14 @@ test('代理和直连分别限制首包和流式空闲时间，持续输出不�
       patch: createPatchAPI(),
       services: { get: () => undefined },
       config: {
-        async register() {
+        async register(_owner: unknown, template: ConfigTemplate) {
           return {
-            get: () => ({ value: config(), revision: Number(proxyEnabled) }),
+            get: () => ({
+              value: validateValues(template.fields, config()),
+              revision: template.id === 'dsh-network-settings' ? 0 : Number(proxyEnabled),
+            }),
             watch: () => () => {},
+            dispose() {},
           };
         },
       },

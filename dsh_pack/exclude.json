@@ -1,0 +1,6 @@
+[
+  "./profiles/<profile>/config/dsh-network-settings-connection/",
+  "./profiles/<profile>/config/dsh-network-settings/",
+  "./net-proxy.json",
+  "./net-proxy.json.tmp"
+]

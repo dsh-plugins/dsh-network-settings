@@ -172,14 +172,24 @@ try {
         try { return { status: response.status, body: JSON.parse(text) }; }
         catch { throw new Error(`${path} returned ${response.status}: ${text}`); }
       };
+      const policyId = 'dsh-network-settings-policy';
+      const connectionId = 'dsh-network-settings-connection';
       let list;
-      for (let i=0;i<150;i++) {
-        try { list = await request('/api/dshloader/config'); if (list.status===200 && list.body.value.some(view=>view.template.id==='dsh-network-settings')) break; } catch {}
+      for (let i = 0; i < 150; i++) {
+        try {
+          list = await request('/api/dshloader/config');
+          if (list.status === 200 && [policyId, connectionId].every(id => list.body.value.some(view => view.template.id === id))) {
+            break;
+          }
+        } catch {}
         if (server.child.exitCode !== null) throw new Error('Host exited during plugin activation');
         await delay(100);
       }
       assert.equal(list?.status, 200, 'Configuration bridge must activate');
-      const view = list.body.value.find(view => view.template.id === 'dsh-network-settings'); assert(view);
+      const policy = list.body.value.find(view => view.template.id === policyId);
+      const connection = list.body.value.find(view => view.template.id === connectionId);
+      assert(policy && connection, 'Both network settings forms must activate');
+      assert(!list.body.value.some(view => view.template.id === 'dsh-network-settings'));
       const expectIdle = async expected => {
         for (let i = 0; i < 80; i++) {
           const state = (await request('/__pi-ai-config')).body;
@@ -194,16 +204,26 @@ try {
       if (verifyPiAi) {
         await expectIdle(240000);
       }
-      const value = { uaEnabled: true, userAgent: `network-matrix/${version}`, proxyEnabled: false, retryEnabled: false, proxyPassword: 'matrix-secret' };
+      const policyValue = { uaEnabled: true, userAgent: `network-matrix/${version}`, retryEnabled: false };
       if (verifyPiAi) {
-        value.requestIdleTimeoutMs = testIdleTimeout;
+        policyValue.requestIdleTimeoutMs = testIdleTimeout;
       }
-      const saved = await request('/api/dshloader/config/dsh-network-settings', { expectedRevision: view.revision, value });
-      assert.equal(saved.status, 200, JSON.stringify(saved.body));
-      assert(!JSON.stringify(saved.body).includes('matrix-secret'));
+      const savedPolicy = await request('/api/dshloader/config/' + policyId, { expectedRevision: policy.revision, value: policyValue });
+      assert.equal(savedPolicy.status, 200, JSON.stringify(savedPolicy.body));
+      const savedConnection = await request('/api/dshloader/config/' + connectionId, {
+        expectedRevision: connection.revision,
+        value: { proxyEnabled: false, proxyPassword: 'matrix-secret' },
+      });
+      assert.equal(savedConnection.status, 200, JSON.stringify(savedConnection.body));
+      assert(!JSON.stringify(savedConnection.body).includes('matrix-secret'));
       const echo = await request('/__network-test'); assert.equal(echo.body.ua, `network-matrix/${version}`);
-      const conflict = await request('/api/dshloader/config/dsh-network-settings', { expectedRevision: view.revision, value: { userAgent: 'stale' } }); assert.equal(conflict.status, 409);
-      const disk = JSON.parse(await readFile(join(profile, 'config/dsh-network-settings/config.json'), 'utf8')); assert.equal(disk.value.userAgent, `network-matrix/${version}`);
+      const conflict = await request('/api/dshloader/config/' + policyId, { expectedRevision: policy.revision, value: { userAgent: 'stale' } });
+      assert.equal(conflict.status, 409);
+      const disk = JSON.parse(await readFile(join(profile, 'config', policyId, 'config.json'), 'utf8'));
+      assert.equal(disk.value.userAgent, `network-matrix/${version}`);
+      assert(!Object.hasOwn(disk.value, 'proxyPassword'));
+      const connectionDisk = JSON.parse(await readFile(join(profile, 'config', connectionId, 'config.json'), 'utf8'));
+      assert.equal(connectionDisk.value.proxyPassword, 'matrix-secret');
       const html = await (await fetch(origin, { headers: { cookie } })).text();
       assert(html.includes('__DSHLOADER_BOOT__') && html.includes(version), 'Host must inject versioned browser boot');
       assert.equal((await request('/_dsh/dsh-network-settings/probe')).status, 200);
